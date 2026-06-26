@@ -26,7 +26,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT="$REPO/worldpool-demo-$(date +%Y%m%d-%H%M%S).mp4"
 VPS="murtaza@46.225.110.140"
 SERVICE="quadriga-automations-worldpool"
-VENV="$REPO/.venv/bin/python3"
+VENV="$(which python3)"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
@@ -38,14 +38,10 @@ echo ""
 
 cd "$REPO"
 
-# ── 1. Stop VPS bot ───────────────────────────────────────────────────────────
-echo "==> [1/8] Stopping VPS bot (freeing bot token)..."
-if ssh -o ConnectTimeout=5 "$VPS" "sudo systemctl stop $SERVICE" 2>/dev/null; then
-    echo "    stopped."
-else
-    echo "    VPS unreachable or already stopped — continuing."
-fi
-sleep 1
+# ── 1. Note on VPS bot ────────────────────────────────────────────────────────
+echo "==> [1/8] Starting local demo bot (will take over bot token from VPS)..."
+# The local bot connecting with the same token displaces the VPS bot automatically.
+# After recording, restart VPS bot with: ssh $VPS sudo systemctl restart $SERVICE
 
 # ── 2. Start demo bot locally ─────────────────────────────────────────────────
 echo "==> [2/8] Starting demo bot locally..."
@@ -120,10 +116,10 @@ kill $BOT_PID 2>/dev/null || true
 wait $BOT_PID 2>/dev/null || true
 
 echo "    Restarting VPS bot..."
-if ssh -o ConnectTimeout=5 "$VPS" "sudo systemctl start $SERVICE" 2>/dev/null; then
+if ssh -o ConnectTimeout=5 "$VPS" "sudo systemctl restart $SERVICE" 2>/dev/null; then
     echo "    ✅ VPS bot restarted."
 else
-    echo "    ⚠️  Restart manually: ssh $VPS sudo systemctl start $SERVICE"
+    echo "    ⚠️  Restart manually: ssh $VPS 'sudo systemctl restart $SERVICE'"
 fi
 
 echo ""
