@@ -83,8 +83,7 @@ def bet_confirmed(outcome: str, amount: float, odds: float, balance_after: float
 def deposit_pending(amount: float, pay_url: str, memo: str, operator_wallet: str) -> str:
     return (
         f"💳 *Deposit ${amount:.2f} USDC*\n\n"
-        f"[Tap to pay in Phantom]({pay_url})\n"
-        f"_Opens Phantom with amount and memo pre\\-filled_\n\n"
+        f"Tap the button below to pay in Phantom \\(amount \\+ memo pre\\-filled\\)\\.\n\n"
         f"*Or send manually:*\n"
         f"To: `{operator_wallet}`\n"
         f"Amount: `{amount:.2f}` USDC\n"
