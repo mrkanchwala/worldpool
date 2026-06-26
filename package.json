@@ -5,7 +5,8 @@
   "type": "module",
   "description": "TxLINE on-chain subscription helper for WorldPool (devnet free World Cup tier)",
   "scripts": {
-    "subscribe": "node scripts/subscribe.mjs"
+    "subscribe": "node scripts/subscribe.mjs",
+    "postinstall": "node scripts/postinstall.cjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",

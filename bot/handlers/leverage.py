@@ -62,9 +62,9 @@ async def _call_kamino(mode: str, wallet: str, amount: float | None = None) -> d
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_SUBPROCESS_TIMEOUT)
         output = stdout.decode().strip()
         if not output:
-            err = stderr.decode().strip()[:500]  # cap to avoid leaking large stack traces
-            logger.warning("kamino_leverage.mjs no output. stderr=%s", err)
-            return {"ok": False, "reason": "no_output", "message": err or "No output from Kamino bridge."}
+            err = stderr.decode().strip()
+            logger.warning("kamino_leverage.mjs no output. stderr=%s", err[:1000])
+            return {"ok": False, "reason": "no_output", "message": "Kamino service unavailable. Try again shortly."}
         return json.loads(output.splitlines()[-1])  # last line is the JSON result
     except asyncio.TimeoutError:
         if proc is not None:

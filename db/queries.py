@@ -80,7 +80,10 @@ async def create_pool(
 
 
 async def get_open_pools(db: aiosqlite.Connection) -> list[aiosqlite.Row]:
-    async with db.execute("SELECT * FROM pools WHERE status = 'open' ORDER BY created_at DESC LIMIT 10") as cur:
+    async with db.execute(
+        "SELECT * FROM pools WHERE status = 'open' "
+        "ORDER BY kickoff_time ASC NULLS LAST, created_at ASC LIMIT 15"
+    ) as cur:
         return await cur.fetchall()
 
 

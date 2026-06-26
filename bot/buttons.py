@@ -1,5 +1,6 @@
 """Inline keyboard builders for all TG bot flows."""
 from __future__ import annotations
+from datetime import datetime, timezone
 from telethon import Button
 
 
@@ -20,11 +21,30 @@ def deposit_amounts() -> list:
 
 
 
+def _pool_label(p) -> str:
+    """Render pool button label with live/upcoming indicator and kickoff date."""
+    now = datetime.now(timezone.utc)
+    kickoff_str = p["kickoff_time"] if p["kickoff_time"] else None
+    if kickoff_str:
+        try:
+            # Accept ISO format e.g. 2026-07-09T20:00 or 2026-07-09T20:00:00
+            kt = datetime.fromisoformat(kickoff_str.replace("Z", "+00:00"))
+            if kt.tzinfo is None:
+                kt = kt.replace(tzinfo=timezone.utc)
+            if kt > now:
+                # Upcoming — show date and time
+                day_label = kt.strftime("%-d %b %H:%M")
+                return f"⏳ {p['home_team']} vs {p['away_team']} · {day_label}"
+        except ValueError:
+            pass
+    return f"🔴 {p['home_team']} vs {p['away_team']}"
+
+
 def pool_list(pools: list) -> list:
     """Build pool selection buttons from pool rows."""
     buttons = []
-    for p in pools[:8]:
-        label = f"{'🔴 ' if p['status'] == 'open' else ''}{p['home_team']} vs {p['away_team']}"
+    for p in pools[:10]:
+        label = _pool_label(p)
         data = f"pool_{p['pool_id']}".encode()
         buttons.append([Button.inline(label, data)])
     buttons.append([Button.inline("➕ Create Pool", b"create_pool")])
