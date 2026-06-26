@@ -51,8 +51,8 @@ echo "    Demo DB cleared."
 echo "==> [2/8] Starting demo bot locally..."
 PYTHONPATH="$REPO" "$VENV" demo/demo_match.py > /tmp/worldpool-demo-bot.log 2>&1 &
 BOT_PID=$!
-echo "    PID $BOT_PID — waiting 6s for Telegram connect..."
-sleep 6
+echo "    PID $BOT_PID — waiting 12s for Telegram connect..."
+sleep 12
 
 # Check bot started correctly
 if ! kill -0 $BOT_PID 2>/dev/null; then
@@ -110,8 +110,10 @@ echo ""
 echo "==> [6/8] Holding on payout screen (3s)..."
 sleep 3
 
-echo "==> [7/8] Stopping recording..."
-kill $REC_PID 2>/dev/null || true
+echo "==> [7/8] Stopping recording (finalizing MP4)..."
+kill -INT $REC_PID 2>/dev/null || true   # SIGINT → ffmpeg writes moov atom cleanly
+sleep 4                                   # give ffmpeg time to finalize
+kill -9 $REC_PID 2>/dev/null || true     # force kill if still alive
 wait $REC_PID 2>/dev/null || true
 
 # ── 8. Cleanup ────────────────────────────────────────────────────────────────
