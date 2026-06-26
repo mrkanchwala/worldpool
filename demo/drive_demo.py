@@ -164,7 +164,9 @@ async def main() -> None:
     print("==> [7/8] ✅ Confirming bet")
     before = await _latest_id(client, bot)
     await _click_btn(confirm_msg, b"confirm_", "confirm")
-    await _wait_new(client, bot, before)
+    placed = await _wait_new(client, bot, before, timeout=10)
+    if placed:
+        print(f"    Bet placed: {(placed.text or '')[:60].strip()}")
     await asyncio.sleep(BEAT)
 
     # ── 8. /playmatch — scripted match ───────────────────────────────────────

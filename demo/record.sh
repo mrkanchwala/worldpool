@@ -46,7 +46,8 @@ echo "==> [1/8] Starting local demo bot (will take over bot token from VPS)..."
 # ── 1b. Clean demo DB + stale local bot session from previous runs ───────────
 rm -f "$REPO/worldpool_demo.db" "$REPO/worldpool_demo.db-wal" "$REPO/worldpool_demo.db-shm"
 rm -f "$REPO/worldpool_bot.session" "$REPO/worldpool_bot.session-journal"
-echo "    Demo DB + stale local bot session cleared."
+rm -f "$REPO/worldpool_demo.session" "$REPO/worldpool_demo.session-journal"
+echo "    Demo DB + all stale local bot sessions cleared."
 
 # ── 2. Start demo bot locally ─────────────────────────────────────────────────
 echo "==> [2/8] Starting demo bot locally..."
