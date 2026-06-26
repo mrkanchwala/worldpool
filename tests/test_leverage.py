@@ -276,18 +276,18 @@ def test_phantom_universal_link_devnet():
 # ── T10: SPL transfer verification ────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_spl_verify_missing_memo(monkeypatch):
-    """T10a: _verify_spl_transfer returns False when memo doesn't contain tg_user_id."""
+async def test_spl_verify_wrong_sender(monkeypatch):
+    """T10a: _verify_spl_transfer returns False when authority doesn't match sender_wallet."""
     import httpx
     import bot.handlers.deposit as deposit_mod
     from bot.handlers.deposit import _verify_spl_transfer
 
     test_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
     test_wallet = "OperatorWalletXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    sender = "SenderWalletAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     monkeypatch.setattr(deposit_mod, "OPERATOR_WALLET", test_wallet)
     monkeypatch.setattr(deposit_mod, "USDC_MINT", test_mint)
 
-    # Valid SPL transfer but memo contains wrong user ID
     mock_tx = {
         "result": {
             "meta": {"err": None},
@@ -295,16 +295,13 @@ async def test_spl_verify_missing_memo(monkeypatch):
                 "message": {
                     "instructions": [
                         {
-                            "program": "spl-memo",
-                            "parsed": "999999",  # wrong user ID
-                        },
-                        {
                             "program": "spl-token",
                             "parsed": {
                                 "type": "transferChecked",
                                 "info": {
                                     "mint": test_mint,
                                     "destination": test_wallet,
+                                    "authority": "WrongWalletBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
                                     "tokenAmount": {"uiAmount": 10.0},
                                 },
                             },
@@ -325,22 +322,20 @@ async def test_spl_verify_missing_memo(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient())
 
-    result = await _verify_spl_transfer("https://fake.rpc", "SomeSig", 10.0, 12345)
-    assert result is False  # memo mismatch
+    result = await _verify_spl_transfer("https://fake.rpc", "SomeSig", 10.0, sender)
+    assert result is False  # sender mismatch
 
 
 @pytest.mark.asyncio
 async def test_spl_verify_happy_path(monkeypatch):
-    """T10b: _verify_spl_transfer returns True when memo + transfer both match."""
+    """T10b: _verify_spl_transfer returns True when authority + destination + amount all match."""
     import httpx
     import bot.handlers.deposit as deposit_mod
     from bot.handlers.deposit import _verify_spl_transfer
 
-    tg_user_id = 12345
     test_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
     test_wallet = "OperatorWalletXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-
-    # Patch module-level constants (set at import time from env)
+    sender = "SenderWalletAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     monkeypatch.setattr(deposit_mod, "OPERATOR_WALLET", test_wallet)
     monkeypatch.setattr(deposit_mod, "USDC_MINT", test_mint)
 
@@ -351,16 +346,13 @@ async def test_spl_verify_happy_path(monkeypatch):
                 "message": {
                     "instructions": [
                         {
-                            "program": "spl-memo",
-                            "parsed": str(tg_user_id),
-                        },
-                        {
                             "program": "spl-token",
                             "parsed": {
                                 "type": "transferChecked",
                                 "info": {
                                     "mint": test_mint,
                                     "destination": test_wallet,
+                                    "authority": sender,
                                     "tokenAmount": {"uiAmount": 10.0},
                                 },
                             },
@@ -381,5 +373,5 @@ async def test_spl_verify_happy_path(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient())
 
-    result = await _verify_spl_transfer("https://fake.rpc", "SomeSig", 10.0, tg_user_id)
+    result = await _verify_spl_transfer("https://fake.rpc", "SomeSig", 10.0, sender)
     assert result is True

@@ -18,9 +18,6 @@ def deposit_amounts() -> list:
     ]
 
 
-def pay_button(pay_url: str) -> list:
-    """URL button that opens the Solana Pay URI — renders as a tappable button on mobile."""
-    return [[Button.url("💳 Pay in Phantom", pay_url)]]
 
 
 def pool_list(pools: list) -> list:
