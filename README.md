@@ -130,7 +130,7 @@ WorldPool subscribes to two TxLINE SSE streams simultaneously:
 
 Auth: `Authorization: Bearer <JWT>` + `X-Api-Token: <apiToken>` (both headers required).
 
-Subscription: `scripts/subscribe.mjs` · service_level=1 (devnet free tier, 60s delay) · auto-reconnects with exponential backoff (3s → 60s cap). Bot starts normally if no token — all commands still work.
+Subscription: `scripts/subscribe.mjs` · service_level=12 (mainnet, real World Cup data) · auto-reconnects with exponential backoff (3s → 60s cap). Bot starts normally if no token — all commands still work.
 
 ---
 
@@ -248,7 +248,7 @@ TG_API_HASH=
 TG_BOT_TOKEN=
 ADMIN_TG_ID=             # required — bot refuses to start without it
 OPERATOR_ESCROW_WALLET=  # USDC recipient address
-TXLINE_BASE_URL=https://txline-dev.txodds.com
+TXLINE_BASE_URL=https://txline.txodds.com
 KAMINO_RPC_URL=          # optional — defaults to public mainnet RPC
 ```
 
@@ -277,6 +277,7 @@ KAMINO_RPC_URL=          # optional — defaults to public mainnet RPC
 
 ## Roadmap (post-hackathon)
 
+- [ ] **Phase 2: Trustless settlement** — CPI into TxLINE `validate_stat` so `full_time` scores are verified on-chain; removes operator `/settle` command entirely
 - [ ] On-chain deposit auto-detection (full SPL verification, `DEPOSIT_AUTOCREDIT`)
 - [ ] Phantom QR code for deposit (in-chat scannable)
 - [ ] Leverage position status tracker (`/myloans`)
