@@ -29,3 +29,8 @@ anchor/worldpool/node_modules/
 # Logs
 *.log
 /tmp/
+
+# Demo recording
+demo/demo_driver.session
+demo/demo_driver.session-journal
+worldpool-demo-*.mp4
