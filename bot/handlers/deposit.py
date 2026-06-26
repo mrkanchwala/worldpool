@@ -27,14 +27,15 @@ _AMOUNT_TOLERANCE = 0.01
 _USDC_DECIMALS = 6
 
 
-def _solana_pay_url(amount: float, memo: str) -> str:
-    params = urllib.parse.urlencode({
-        "amount": f"{amount:.2f}",
-        "spl-token": USDC_MINT,
-        "memo": memo,
-        "label": "WorldPool Deposit",
-    })
-    return f"solana:{OPERATOR_WALLET}?{params}"
+PAY_REDIRECT_BASE = os.getenv(
+    "PAY_REDIRECT_BASE", "https://quadrigasolutions.com/api/pay"
+)
+
+
+def _deposit_link(amount: float, memo: str) -> str:
+    """Return an HTTPS link that redirects to the solana: pay URI.
+    Telegram renders HTTPS links as clickable; mobile Phantom catches the redirect."""
+    return f"{PAY_REDIRECT_BASE}/{OPERATOR_WALLET}/{amount:.2f}/{memo}"
 
 
 def phantom_universal_link(tx_base64: str, cluster: str = "mainnet-beta") -> str:
@@ -190,7 +191,7 @@ def register(client: TelegramClient, db, rpc_url: str) -> None:
         amount = float(amount_str)
         user = await event.get_sender()
         memo = str(user.id)
-        pay_url = _solana_pay_url(amount, memo)
+        pay_url = _deposit_link(amount, memo)
 
         await event.answer()
         await event.respond(
