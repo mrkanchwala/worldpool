@@ -195,7 +195,6 @@ def register(client: TelegramClient, db, rpc_url: str) -> None:
         await event.answer()
         await event.respond(
             deposit_pending(amount, pay_url, memo, OPERATOR_WALLET),
-            buttons=pay_button(pay_url),
             parse_mode="md",
             link_preview=False,
         )
