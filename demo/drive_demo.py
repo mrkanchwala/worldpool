@@ -12,56 +12,68 @@ Usage (from worldpool repo root):
 from __future__ import annotations
 import asyncio
 import os
-import sys
+import re
 
 from dotenv import load_dotenv
 load_dotenv()
 
 from telethon import TelegramClient
-from telethon.tl.types import Message
+from telethon.tl.custom import Message
 
 TG_API_ID  = int(os.environ["TG_API_ID"])
 TG_API_HASH = os.environ["TG_API_HASH"]
 BOT        = "txodds_mkbot"
 
-# Demo parameters — must match /createpool and /playmatch
-POOL_ID = "demo01"
 OUTCOME = "home"   # Brazil wins
 STAKE   = 10       # $10 USDC
-
-BEAT = 3.5         # seconds between steps (matches demo harness BEAT)
+BEAT    = 3.0      # seconds between steps
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-async def _wait_buttons(client: TelegramClient, bot_entity, timeout: int = 15) -> Message | None:
-    """Poll until bot sends a message with inline buttons, then return it."""
+async def _latest_id(client, bot) -> int:
+    """Return the id of the most recent message in this chat (0 if empty)."""
+    msgs = await client.get_messages(bot, limit=1)
+    return msgs[0].id if msgs else 0
+
+
+async def _wait_new(client, bot, after_id: int, timeout: int = 14,
+                    need_buttons: bool = False) -> Message | None:
+    """Poll until a message with id > after_id arrives (optionally with buttons)."""
     deadline = asyncio.get_event_loop().time() + timeout
-    seen_ids: set[int] = set()
-
-    # Seed with current message IDs so we only catch new messages
-    seed = await client.get_messages(bot_entity, limit=5)
-    for m in seed:
-        seen_ids.add(m.id)
-
     while asyncio.get_event_loop().time() < deadline:
-        msgs = await client.get_messages(bot_entity, limit=5)
+        msgs = await client.get_messages(bot, limit=10)
         for m in msgs:
-            if m.id not in seen_ids and m.buttons:
-                return m
-        await asyncio.sleep(0.6)
+            if m.id > after_id:
+                if not need_buttons or m.buttons:
+                    return m
+        await asyncio.sleep(0.5)
     return None
 
 
-async def _click(msg: Message | None, data: bytes, label: str) -> None:
-    if msg is None:
-        print(f"    ⚠️  no message to click for: {label}")
-        return
+def _find_btn(msg: Message | None, data_prefix: bytes) -> object | None:
+    """Return the first button whose data starts with data_prefix."""
+    if not msg or not msg.buttons:
+        return None
+    for row in msg.buttons:
+        for btn in row:
+            if btn.data and btn.data.startswith(data_prefix):
+                return btn
+    return None
+
+
+async def _click_btn(msg: Message | None, data_prefix: bytes, label: str) -> bool:
+    btn = _find_btn(msg, data_prefix)
+    if not btn:
+        print(f"    ⚠️  button not found: {label}")
+        return False
     try:
-        await msg.click(data=data)
-        print(f"    ✅ clicked: {label}")
+        await btn.click()
+        print(f"    ✅ clicked '{btn.text}' ({label})")
+        return True
     except Exception as e:
         print(f"    ⚠️  click failed ({label}): {e}")
+        return False
 
 
 # ── main flow ─────────────────────────────────────────────────────────────────
@@ -69,65 +81,97 @@ async def _click(msg: Message | None, data: bytes, label: str) -> None:
 async def main() -> None:
     session_path = os.path.join(os.path.dirname(__file__), "demo_driver")
     client = TelegramClient(session_path, TG_API_ID, TG_API_HASH)
-    await client.start()  # phone + OTP on first run; silent after
+    await client.start()
 
     me = await client.get_me()
-    bot_entity = await client.get_entity(BOT)
+    bot = await client.get_entity(BOT)
     print(f"\n  Connected as: {me.first_name} (@{me.username})")
-    print(f"  Driving:      @{BOT}")
-    print(f"  Pool:         {POOL_ID}  outcome={OUTCOME}  stake=${STAKE}\n")
+    print(f"  Driving:      @{BOT}\n")
 
-    async def send(cmd: str, label: str) -> None:
-        print(f"==> {label}")
-        await client.send_message(bot_entity, cmd)
-        await asyncio.sleep(BEAT)
-
-    # ── Step 1: Register ──────────────────────────────────────────────────────
-    await send("/start", "[1/8] /start — register account")
-
-    # ── Step 2: Credit demo balance ───────────────────────────────────────────
-    await send("/demobalance", "[2/8] /demobalance — credit $100 demo USDC")
-
-    # ── Step 3: Create pool ───────────────────────────────────────────────────
-    await send(
-        f"/createpool Brazil vs Argentina {POOL_ID}",
-        "[3/8] /createpool Brazil vs Argentina",
-    )
-
-    # ── Step 4: Browse pools → click match ───────────────────────────────────
-    print("==> [4/8] /pool — selecting match")
-    await client.send_message(bot_entity, "/pool")
-    await asyncio.sleep(BEAT)
-    msg = await _wait_buttons(client, bot_entity)
-    await _click(msg, f"pool_{POOL_ID}".encode(), f"pool_{POOL_ID}")
+    # ── 1. /start ────────────────────────────────────────────────────────────
+    print("==> [1/8] /start — register account")
+    before = await _latest_id(client, bot)
+    await client.send_message(bot, "/start")
+    await _wait_new(client, bot, before)
     await asyncio.sleep(BEAT)
 
-    # ── Step 5: Pick outcome (Home / Brazil) ─────────────────────────────────
-    print("==> [5/8] Picking outcome: 🏠 Brazil (Home)")
-    msg = await _wait_buttons(client, bot_entity)
-    await _click(msg, f"bet_{POOL_ID}_{OUTCOME}".encode(), f"bet_{POOL_ID}_{OUTCOME}")
+    # ── 2. /demobalance ──────────────────────────────────────────────────────
+    print("==> [2/8] /demobalance — credit $100 demo USDC")
+    before = await _latest_id(client, bot)
+    await client.send_message(bot, "/demobalance")
+    await _wait_new(client, bot, before)
     await asyncio.sleep(BEAT)
 
-    # ── Step 6: Pick stake ────────────────────────────────────────────────────
+    # ── 3. /createpool — capture the real pool_id from response ──────────────
+    print("==> [3/8] /createpool Brazil vs Argentina demo01")
+    before = await _latest_id(client, bot)
+    await client.send_message(bot, "/createpool Brazil vs Argentina demo01")
+    resp = await _wait_new(client, bot, before)
+    pool_id = None
+    if resp and resp.text:
+        m = re.search(r"Pool[:\s*`]+([a-f0-9]{6,36})", resp.text)
+        if m:
+            pool_id = m.group(1)
+            print(f"    Pool ID: {pool_id}")
+    if not pool_id:
+        pool_id = "demo01"   # fallback — /playmatch also accepts fixture_id now
+        print(f"    Using fixture_id fallback: {pool_id}")
+    await asyncio.sleep(BEAT)
+
+    # ── 4. /pool → click the match ───────────────────────────────────────────
+    print("==> [4/8] /pool — selecting Brazil vs Argentina")
+    before = await _latest_id(client, bot)
+    await client.send_message(bot, "/pool")
+    pool_list_msg = await _wait_new(client, bot, before, need_buttons=True)
+    before = await _latest_id(client, bot)
+    await _click_btn(pool_list_msg, b"pool_", "pool button")
+    outcome_msg = await _wait_new(client, bot, before, need_buttons=True)
+    await asyncio.sleep(BEAT)
+
+    # ── 5. Pick outcome (Home / Brazil) ──────────────────────────────────────
+    print("==> [5/8] Picking outcome: 🏠 Home (Brazil)")
+    before = await _latest_id(client, bot)
+    if outcome_msg and outcome_msg.buttons:
+        for row in outcome_msg.buttons:
+            for btn in row:
+                if btn.data and btn.data.endswith(b"_home"):
+                    try:
+                        await btn.click()
+                        print(f"    ✅ clicked '{btn.text}' (home outcome)")
+                    except Exception as e:
+                        print(f"    ⚠️  home click failed: {e}")
+                    break
+    stake_msg = await _wait_new(client, bot, before, need_buttons=True)
+    await asyncio.sleep(BEAT)
+
+    # ── 6. Pick stake ($10) ───────────────────────────────────────────────────
     print(f"==> [6/8] Stake: ${STAKE} USDC")
-    msg = await _wait_buttons(client, bot_entity)
-    await _click(msg, f"stake_{POOL_ID}_{OUTCOME}_{STAKE}".encode(), f"stake ${STAKE}")
+    before = await _latest_id(client, bot)
+    if stake_msg and stake_msg.buttons:
+        for row in stake_msg.buttons:
+            for btn in row:
+                if btn.data and btn.data.endswith(f"_{STAKE}".encode()):
+                    try:
+                        await btn.click()
+                        print(f"    ✅ clicked '{btn.text}' (${STAKE})")
+                    except Exception as e:
+                        print(f"    ⚠️  stake click failed: {e}")
+                    break
+    confirm_msg = await _wait_new(client, bot, before, need_buttons=True)
     await asyncio.sleep(BEAT)
 
-    # ── Step 7: Confirm ───────────────────────────────────────────────────────
+    # ── 7. Confirm ────────────────────────────────────────────────────────────
     print("==> [7/8] ✅ Confirming bet")
-    msg = await _wait_buttons(client, bot_entity)
-    confirm_data = f"confirm_{POOL_ID}_{OUTCOME}_{float(STAKE)}".encode()
-    await _click(msg, confirm_data, "confirm bet")
+    before = await _latest_id(client, bot)
+    await _click_btn(confirm_msg, b"confirm_", "confirm")
+    await _wait_new(client, bot, before)
     await asyncio.sleep(BEAT)
 
-    # ── Step 8: Play match ────────────────────────────────────────────────────
-    await send(
-        f"/playmatch {POOL_ID} {OUTCOME}",
-        "[8/8] /playmatch — scripted match + payout",
-    )
+    # ── 8. /playmatch — scripted match ───────────────────────────────────────
+    print(f"==> [8/8] /playmatch {pool_id} home — scripted match + payout")
+    await client.send_message(bot, f"/playmatch {pool_id} home")
     print("    Kickoff → odds shift → goal → half time → full time → payout")
-    print("    (waiting ~25s for all match events)...")
+    print("    (waiting ~26s for all match events)...")
     await asyncio.sleep(26)
 
     print("\n  Demo complete! The recording can stop now.\n")

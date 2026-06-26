@@ -102,6 +102,13 @@ def register_demo(client: TelegramClient, db) -> None:
         pool_id, result = m.group(1).strip(), m.group(2).lower()
         pool = await queries.get_pool(db, pool_id)
         if not pool:
+            # Also try looking up by fixture_id (so /playmatch demo01 works too)
+            async with db.execute(
+                "SELECT * FROM pools WHERE fixture_id = ? AND status != 'settled' ORDER BY created_at DESC LIMIT 1",
+                (pool_id,),
+            ) as cur:
+                pool = await cur.fetchone()
+        if not pool:
             await event.respond("Pool not found\\.", parse_mode="md")
             raise events.StopPropagation
         if pool["status"] == "settled":
