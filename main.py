@@ -21,6 +21,7 @@ import bot.handlers.positions as h_positions
 import bot.handlers.misc as h_misc
 import bot.handlers.admin as h_admin
 import bot.handlers.wallet as h_wallet
+import bot.handlers.leverage as h_leverage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("worldpool")
@@ -53,6 +54,7 @@ async def main() -> None:
     h_misc.register(client, db)
     h_admin.register(client, db)
     h_wallet.register(client, db)
+    h_leverage.register(client, db)
 
     # TxLINE stream callbacks
     streamer = TxLINEStreamer()
@@ -80,6 +82,28 @@ async def main() -> None:
             msg = fulltime_alert(event, payouts, total_pool)
             for chat_id in chats:
                 await client.send_message(chat_id, msg, parse_mode="md")
+
+            # Repayment reminder — notify users with open Kamino leverage positions
+            all_participants = list({p["tg_user_id"] for p in payouts})
+            # Also fetch losers from settled positions
+            settled = await queries.get_pool_positions(db, pool["pool_id"])
+            for pos in settled:
+                uid = pos["tg_user_id"]
+                if uid not in all_participants:
+                    all_participants.append(uid)
+            for uid in all_participants:
+                open_borrows = await queries.get_open_leverage_positions(db, uid)
+                if open_borrows:
+                    total_owed = sum(b["borrow_amount"] for b in open_borrows)
+                    await client.send_message(
+                        uid,
+                        f"⚠️ *Repay your Kamino loan*\n\n"
+                        f"You have an open Kamino borrow of *${total_owed:.2f} USDC*\\.\n"
+                        f"Repay on [app.kamino.finance](https://app.kamino.finance/lending) "
+                        f"to avoid liquidation\\.",
+                        parse_mode="md",
+                        link_preview=False,
+                    )
 
         elif event.event_type == "half_time":
             await queries.close_betting(db, event.fixture_id)

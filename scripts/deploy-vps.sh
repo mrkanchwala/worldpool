@@ -25,6 +25,9 @@ rsync -az --delete \
 echo "==> [2/4] Python venv + deps on VPS..."
 ssh "$VPS" "cd $REMOTE && (test -d .venv || python3 -m venv .venv) && .venv/bin/pip install -q --upgrade pip && .venv/bin/pip install -q -r requirements.txt"
 
+echo "==> [2b/4] Node.js deps on VPS (npm ci)..."
+ssh "$VPS" "cd $REMOTE && npm ci 2>&1 | tail -5"
+
 echo "==> [3/4] Restarting service..."
 if ssh "$VPS" "sudo systemctl restart $SERVICE" 2>/dev/null; then
   echo "    restarted."

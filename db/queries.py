@@ -209,6 +209,37 @@ async def mark_processed(db: aiosqlite.Connection, event_id: str) -> None:
     await db.commit()
 
 
+# ── Leverage positions ─────────────────────────────────────────────────────────
+
+async def create_leverage_position(
+    db: aiosqlite.Connection, tg_user_id: int, borrow_amount: float, kamino_tx_sig: str | None = None
+) -> str:
+    lev_id = str(uuid.uuid4())[:8]
+    await db.execute(
+        """INSERT INTO leverage_positions(lev_id, tg_user_id, borrow_amount, kamino_tx_sig)
+           VALUES(?,?,?,?)""",
+        (lev_id, tg_user_id, borrow_amount, kamino_tx_sig),
+    )
+    await db.commit()
+    return lev_id
+
+
+async def get_open_leverage_positions(db: aiosqlite.Connection, tg_user_id: int) -> list[aiosqlite.Row]:
+    async with db.execute(
+        "SELECT * FROM leverage_positions WHERE tg_user_id = ? AND repaid = 0 ORDER BY created_at DESC",
+        (tg_user_id,),
+    ) as cur:
+        return await cur.fetchall()
+
+
+async def mark_leverage_repaid(db: aiosqlite.Connection, lev_id: str, repay_tx_sig: str | None = None) -> None:
+    await db.execute(
+        "UPDATE leverage_positions SET repaid = 1, repay_tx_sig = ?, repaid_at = datetime('now') WHERE lev_id = ?",
+        (repay_tx_sig, lev_id),
+    )
+    await db.commit()
+
+
 # ── Leaderboard ────────────────────────────────────────────────────────────────
 
 async def get_leaderboard(db: aiosqlite.Connection, limit: int = 10) -> list[aiosqlite.Row]:

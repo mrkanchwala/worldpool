@@ -37,6 +37,19 @@ def _solana_pay_url(amount: float, memo: str) -> str:
     return f"solana:{OPERATOR_WALLET}?{params}"
 
 
+def phantom_universal_link(tx_base64: str, cluster: str = "mainnet-beta") -> str:
+    """Return a Phantom Universal Link for signing a serialized transaction.
+
+    Works on mobile (redirects to Phantom app) and desktop (opens phantom.app in browser).
+    cluster: 'mainnet-beta' | 'devnet'
+    """
+    encoded = urllib.parse.quote(tx_base64, safe="")
+    return (
+        f"https://phantom.app/ul/v1/signAndSendTransaction"
+        f"?transaction={encoded}&cluster={cluster}"
+    )
+
+
 async def _verify_spl_transfer(rpc_url: str, signature: str, expected_amount: float,
                                 tg_user_id: int) -> bool:
     """Verify a transaction is a valid USDC SPL transfer to the operator wallet.

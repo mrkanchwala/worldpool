@@ -9,9 +9,14 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
+    "@kamino-finance/farms-sdk": "^3.2.26",
+    "@kamino-finance/klend-sdk": "^9.1.2",
+    "@solana/kit": "^2.3.0",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.95.4",
     "axios": "^1.7.7",
+    "bn.js": "^5.2.4",
+    "decimal.js": "^10.6.0",
     "tweetnacl": "^1.0.3"
   }
 }

@@ -10,6 +10,10 @@ from bot.alerts import fulltime_alert
 from txline.parser import ScoreEvent
 
 ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
+if not ADMIN_TG_ID:
+    raise RuntimeError(
+        "ADMIN_TG_ID env var must be set — all admin commands (/settle, /createpool) are unprotected without it"
+    )
 
 # /createpool Brazil vs Argentina wc2026_001 [2026-07-09T20:00]
 _CREATE_PATTERN = re.compile(

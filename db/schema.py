@@ -66,10 +66,22 @@ CREATE TABLE IF NOT EXISTS settlements (
     settled_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS leverage_positions (
+    lev_id          TEXT    PRIMARY KEY,
+    tg_user_id      INTEGER NOT NULL REFERENCES users(tg_user_id),
+    borrow_amount   REAL    NOT NULL,
+    kamino_tx_sig   TEXT,
+    repaid          INTEGER NOT NULL DEFAULT 0,
+    repay_tx_sig    TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    repaid_at       TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_pools_fixture ON pools(fixture_id);
 CREATE INDEX IF NOT EXISTS idx_positions_pool ON positions(pool_id);
 CREATE INDEX IF NOT EXISTS idx_positions_user ON positions(tg_user_id);
 CREATE INDEX IF NOT EXISTS idx_pool_chats_pool ON pool_chats(pool_id);
+CREATE INDEX IF NOT EXISTS idx_lev_user ON leverage_positions(tg_user_id);
 """
 
 

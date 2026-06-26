@@ -12,6 +12,9 @@ ExecStart=/home/murtaza/worldpool/.venv/bin/python main.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# NODE_BIN: absolute path to node binary — nvm path not available in systemd env
+# Update this if node version changes on VPS (check: nvm which node)
+Environment=NODE_BIN=/home/murtaza/.nvm/versions/node/v24.12.0/bin/node
 
 # Hardening (CIE)
 NoNewPrivileges=true
