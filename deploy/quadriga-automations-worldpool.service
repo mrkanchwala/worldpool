@@ -1,0 +1,27 @@
+[Unit]
+Description=WorldPool Telegram prediction-market bot (Quadriga Automations)
+Documentation=https://quadrigasolutions.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=murtaza
+WorkingDirectory=/home/murtaza/worldpool
+ExecStart=/home/murtaza/worldpool/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+# Hardening (CIE)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/murtaza/worldpool
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

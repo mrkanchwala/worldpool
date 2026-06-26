@@ -13,11 +13,13 @@ from .parser import ScoreEvent, OddsEvent, parse_score_event, parse_odds_event
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = os.getenv("TXLINE_BASE_URL", "https://txline.txodds.com")
 RECONNECT_DELAY = 3  # seconds, doubles each attempt up to MAX_DELAY
 MAX_RECONNECT_DELAY = 60
-SCORES_STREAM_URL = f"{BASE_URL}/api/scores/stream"
-ODDS_STREAM_URL = f"{BASE_URL}/api/odds/stream"
+
+
+def _base_url() -> str:
+    """Read at call time so .env / env changes always take effect (not frozen at import)."""
+    return os.getenv("TXLINE_BASE_URL", "https://txline.txodds.com")
 
 ScoreCallback = Callable[[ScoreEvent], Awaitable[None]]
 OddsCallback = Callable[[OddsEvent], Awaitable[None]]
@@ -85,7 +87,7 @@ class TxLINEStreamer:
     async def _run_score_stream(self) -> None:
         headers = auth_headers(self._token)
         buffer: list[str] = []
-        async for line in _stream_lines(SCORES_STREAM_URL, headers):
+        async for line in _stream_lines(f"{_base_url()}/api/scores/stream", headers):
             if line == "":
                 # Empty line = end of SSE event block
                 data = _parse_sse_data(buffer)
@@ -101,7 +103,7 @@ class TxLINEStreamer:
     async def _run_odds_stream(self) -> None:
         headers = auth_headers(self._token)
         buffer: list[str] = []
-        async for line in _stream_lines(ODDS_STREAM_URL, headers):
+        async for line in _stream_lines(f"{_base_url()}/api/odds/stream", headers):
             if line == "":
                 data = _parse_sse_data(buffer)
                 buffer.clear()

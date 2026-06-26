@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+load_dotenv()  # MUST precede txline.* imports — they read TXLINE_BASE_URL at import time
+
 from telethon import TelegramClient
 
 from db.schema import init_db
@@ -19,7 +21,6 @@ import bot.handlers.positions as h_positions
 import bot.handlers.misc as h_misc
 import bot.handlers.admin as h_admin
 
-load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("worldpool")
 

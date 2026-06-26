@@ -70,7 +70,8 @@ def load_token() -> dict:
 
 
 def auth_headers(token: dict) -> dict:
+    # Per TxLINE SSE docs: Authorization carries the guest JWT; X-Api-Token carries the apiToken.
     return {
-        "Authorization": f"Bearer {token['apiToken']}",
+        "Authorization": f"Bearer {token.get('jwt') or token['apiToken']}",
         "X-Api-Token": token["apiToken"],
     }
