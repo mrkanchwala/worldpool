@@ -80,11 +80,17 @@ def bet_confirmed(outcome: str, amount: float, odds: float, balance_after: float
     )
 
 
-def deposit_pending(amount: float, pay_url: str) -> str:
+def deposit_pending(amount: float, pay_url: str, memo: str, operator_wallet: str) -> str:
     return (
         f"💳 *Deposit ${amount:.2f} USDC*\n\n"
-        f"[Tap to pay in Phantom]({pay_url})\n\n"
-        f"⏳ Waiting for confirmation\\.\\.\\. \\(10 min timeout\\)"
+        f"*Option 1 — Phantom link \\(recommended\\)*\n"
+        f"[Tap to pay — memo pre\\-filled automatically]({pay_url})\n\n"
+        f"*Option 2 — Send manually from any wallet*\n"
+        f"To: `{operator_wallet}`\n"
+        f"Amount: `{amount:.2f}` USDC\n"
+        f"Memo: `{memo}` ← include this exactly\n\n"
+        f"_The memo identifies your payment\\. No memo = cannot credit your account\\._\n\n"
+        f"⏳ Operator confirms on\\-chain \\(usually a few minutes\\)\\."
     )
 
 

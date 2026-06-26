@@ -194,19 +194,11 @@ def register(client: TelegramClient, db, rpc_url: str) -> None:
 
         await event.answer()
         await event.respond(
-            deposit_pending(amount, pay_url),
+            deposit_pending(amount, pay_url, memo, OPERATOR_WALLET),
             parse_mode="md",
             link_preview=False,
         )
-        # Auto-credit is OFF by default (unsafe memo-based detection — see AUTOCREDIT note).
-        # When disabled, the operator credits the balance manually after verifying the transfer.
         if AUTOCREDIT:
             asyncio.create_task(
                 _poll_deposit(client, event.chat_id, user.id, amount, db, rpc_url)
-            )
-        else:
-            await event.respond(
-                "ℹ️ After payment, your balance is credited once the operator confirms the "
-                "transfer on\\-chain \\(usually within a few minutes\\)\\.",
-                parse_mode="md",
             )
