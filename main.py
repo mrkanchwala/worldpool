@@ -20,6 +20,7 @@ import bot.handlers.pool as h_pool
 import bot.handlers.positions as h_positions
 import bot.handlers.misc as h_misc
 import bot.handlers.admin as h_admin
+import bot.handlers.wallet as h_wallet
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("worldpool")
@@ -51,6 +52,7 @@ async def main() -> None:
     h_positions.register(client, db)
     h_misc.register(client, db)
     h_admin.register(client, db)
+    h_wallet.register(client, db)
 
     # TxLINE stream callbacks
     streamer = TxLINEStreamer()

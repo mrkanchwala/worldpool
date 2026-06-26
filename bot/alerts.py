@@ -72,10 +72,11 @@ def bet_confirmed(outcome: str, amount: float, odds: float, balance_after: float
     potential = amount * odds
     return (
         f"🎯 *Bet placed!*\n\n"
-        f"Pick: *{outcome}* @ {odds:.2f}\n"
+        f"Pick: *{outcome}* @ {odds:.2f} (market ref)\n"
         f"Stake: ${amount:.2f} USDC\n"
-        f"Potential return: *${potential:.2f}*\n\n"
-        f"Balance: ${balance_after:.2f}"
+        f"Est. return: *${potential:.2f}* _(parimutuel)_\n\n"
+        f"Balance: ${balance_after:.2f}\n"
+        f"_Final payout depends on total bets placed_"
     )
 
 

@@ -125,9 +125,10 @@ def register(client: TelegramClient, db, odds_cache: dict, custom_stake_state: d
             f"Match: {pool['home_team']} vs {pool['away_team']}\n"
             f"Pick: *{outcome.capitalize()}*\n"
             f"Stake: *${amount:.2f} USDC*\n"
-            f"Odds: *{locked_odds:.2f}*\n"
-            f"To win: *${potential:.2f}*\n\n"
-            f"Balance after: ${balance - amount:.2f}",
+            f"Market odds (ref): *{locked_odds:.2f}*\n"
+            f"Est. return: *${potential:.2f}* _(parimutuel)_\n\n"
+            f"Balance after: ${balance - amount:.2f}\n"
+            f"_Final payout depends on total bets placed_",
             buttons=confirm_buttons(pool_id, outcome, amount),
             parse_mode="md",
         )

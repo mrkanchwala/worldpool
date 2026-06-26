@@ -1,24 +1,30 @@
 """Handler: /deposit — generate Solana Pay TxLink + poll PDA for confirmation."""
 from __future__ import annotations
 import asyncio
+import logging
 import os
 import urllib.parse
 
-from telethon import TelegramClient, events, Button
+import httpx
+from telethon import TelegramClient, events
 
 from bot.alerts import deposit_pending, deposit_confirmed
 from bot.buttons import deposit_amounts
 from db.queries import get_user, credit_balance, upsert_user, is_processed, mark_processed
 
+logger = logging.getLogger(__name__)
+
 OPERATOR_WALLET = os.getenv("OPERATOR_ESCROW_WALLET", "")
-USDC_MINT = os.getenv("USDC_MINT_DEVNET", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")
+# Devnet USDC mint (use USDC_MINT env for mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v)
+USDC_MINT = os.getenv("USDC_MINT", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")
 POLL_INTERVAL = 10  # seconds
 POLL_TIMEOUT = 600  # 10 minutes
-# SECURITY: memo-based auto-credit does NOT verify transfer amount, recipient, or SPL mint.
-# It is spoofable/replayable and MUST NOT be enabled with real funds. Default OFF — operator
-# credits manually after confirming the on-chain transfer. Before mainnet: replace with full
-# getTransaction parsing (verify SPL transfer to operator ATA + exact amount + signature dedup).
 AUTOCREDIT = os.getenv("DEPOSIT_AUTOCREDIT", "false").lower() == "true"
+
+# Tolerance for floating-point amount comparison (0.01 USDC)
+_AMOUNT_TOLERANCE = 0.01
+# USDC has 6 decimals
+_USDC_DECIMALS = 6
 
 
 def _solana_pay_url(amount: float, memo: str) -> str:
@@ -31,41 +37,116 @@ def _solana_pay_url(amount: float, memo: str) -> str:
     return f"solana:{OPERATOR_WALLET}?{params}"
 
 
+async def _verify_spl_transfer(rpc_url: str, signature: str, expected_amount: float,
+                                tg_user_id: int) -> bool:
+    """Verify a transaction is a valid USDC SPL transfer to the operator wallet.
+
+    Checks: correct SPL mint, recipient = operator wallet, amount within tolerance,
+    memo contains tg_user_id. Returns True only if ALL checks pass.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(rpc_url, json={
+                "jsonrpc": "2.0", "id": 1,
+                "method": "getTransaction",
+                "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
+            })
+        tx = r.json().get("result")
+        if not tx:
+            return False
+
+        meta = tx.get("meta", {})
+        if meta.get("err") is not None:
+            return False  # failed transaction
+
+        instructions = (
+            tx.get("transaction", {})
+              .get("message", {})
+              .get("instructions", [])
+        )
+
+        memo_found = False
+        transfer_ok = False
+
+        for ix in instructions:
+            program = ix.get("program", "")
+            parsed = ix.get("parsed", {})
+            ix_type = parsed.get("type", "") if isinstance(parsed, dict) else ""
+            info = parsed.get("info", {}) if isinstance(parsed, dict) else {}
+
+            # Check memo program for tg_user_id
+            if program == "spl-memo":
+                memo_str = str(ix.get("parsed", ""))
+                if str(tg_user_id) in memo_str.split():
+                    memo_found = True
+
+            # Check SPL token transfer
+            if program == "spl-token" and ix_type in ("transfer", "transferChecked"):
+                mint = info.get("mint", "")
+                dest = info.get("destination", "") or info.get("destinationOwner", "")
+                raw_amount = info.get("tokenAmount", {}).get("uiAmount") or info.get("amount")
+
+                if mint != USDC_MINT:
+                    continue
+                if dest != OPERATOR_WALLET:
+                    continue
+
+                try:
+                    actual = float(raw_amount) if "." in str(raw_amount) else int(raw_amount) / (10 ** _USDC_DECIMALS)
+                except (TypeError, ValueError):
+                    continue
+
+                if abs(actual - expected_amount) <= _AMOUNT_TOLERANCE:
+                    transfer_ok = True
+
+        return memo_found and transfer_ok
+
+    except Exception as e:
+        logger.warning("getTransaction verification failed for %s: %s", signature, e)
+        return False
+
+
 async def _poll_deposit(bot: TelegramClient, chat_id: int, tg_user_id: int,
                         amount: float, db, rpc_url: str) -> None:
-    """Poll Solana RPC for deposit confirmation via memo matching."""
-    import httpx
+    """Poll Solana RPC for deposit confirmation with full SPL transfer verification."""
     elapsed = 0
     while elapsed < POLL_TIMEOUT:
         await asyncio.sleep(POLL_INTERVAL)
         elapsed += POLL_INTERVAL
         try:
-            # Simplified: check recent transactions on operator wallet for memo=tg_user_id
             async with httpx.AsyncClient(timeout=10) as client:
                 r = await client.post(rpc_url, json={
                     "jsonrpc": "2.0", "id": 1,
                     "method": "getSignaturesForAddress",
-                    "params": [OPERATOR_WALLET, {"limit": 5}],
+                    "params": [OPERATOR_WALLET, {"limit": 10}],
                 })
                 sigs = r.json().get("result", [])
-            for sig in sigs:
-                memo = sig.get("memo", "") or ""
-                signature = sig.get("signature", "")
-                # Exact memo match (was substring — user 12 matched "123") + per-signature dedup
-                # so one on-chain tx cannot be replayed into multiple credits.
-                if memo.strip().endswith(str(tg_user_id)) and str(tg_user_id) in memo.split():
-                    if signature and await is_processed(db, signature):
-                        continue
-                    if signature:
-                        await mark_processed(db, signature)
+
+            for sig_info in sigs:
+                signature = sig_info.get("signature", "")
+                if not signature:
+                    continue
+                if await is_processed(db, signature):
+                    continue
+
+                # Full SPL transfer verification before crediting
+                if await _verify_spl_transfer(rpc_url, signature, amount, tg_user_id):
+                    await mark_processed(db, signature)
                     await credit_balance(db, tg_user_id, amount)
                     user = await get_user(db, tg_user_id)
-                    await bot.send_message(chat_id, deposit_confirmed(amount, user["usdc_balance"]), parse_mode="md")
+                    await bot.send_message(
+                        chat_id,
+                        deposit_confirmed(amount, user["usdc_balance"]),
+                        parse_mode="md",
+                    )
+                    logger.info("Deposit credited: user=%s amount=%.2f sig=%s", tg_user_id, amount, signature)
                     return
-        except Exception:
-            pass
 
-    await bot.send_message(chat_id,
+        except Exception as e:
+            logger.warning("Deposit poll error: %s", e)
+
+    await bot.send_message(
+        chat_id,
         "⚠️ Deposit not detected after 10 minutes\\.\n"
         "If you sent USDC, contact support with your tx signature\\.",
         parse_mode="md",
