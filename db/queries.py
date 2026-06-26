@@ -11,14 +11,21 @@ _balance_lock = asyncio.Lock()
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
-async def upsert_user(db: aiosqlite.Connection, tg_user_id: int, tg_username: str | None = None, solana_wallet: str | None = None) -> None:
+async def upsert_user(
+    db: aiosqlite.Connection,
+    tg_user_id: int,
+    tg_username: str | None = None,
+    solana_wallet: str | None = None,
+    kamino_wallet: str | None = None,
+) -> None:
     await db.execute(
-        """INSERT INTO users(tg_user_id, tg_username, solana_wallet)
-           VALUES(?, ?, ?)
+        """INSERT INTO users(tg_user_id, tg_username, solana_wallet, kamino_wallet)
+           VALUES(?, ?, ?, ?)
            ON CONFLICT(tg_user_id) DO UPDATE SET
-             tg_username = COALESCE(excluded.tg_username, tg_username),
-             solana_wallet = COALESCE(excluded.solana_wallet, solana_wallet)""",
-        (tg_user_id, tg_username, solana_wallet),
+             tg_username    = COALESCE(excluded.tg_username, tg_username),
+             solana_wallet  = COALESCE(excluded.solana_wallet, solana_wallet),
+             kamino_wallet  = COALESCE(excluded.kamino_wallet, kamino_wallet)""",
+        (tg_user_id, tg_username, solana_wallet, kamino_wallet),
     )
     await db.commit()
 

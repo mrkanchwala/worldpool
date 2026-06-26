@@ -134,15 +134,17 @@ def register(client: TelegramClient, db) -> None:
 
         await upsert_user(db, sender.id, getattr(sender, "username", None))
         user = await get_user(db, sender.id)
-        wallet = user["solana_wallet"] if user else None
+        # Use dedicated Kamino wallet if set; fall back to deposit wallet
+        wallet = (user["kamino_wallet"] if user and user["kamino_wallet"] else
+                  user["solana_wallet"] if user else None)
 
         if not wallet:
             await client.send_message(
                 chat_id,
-                "🔑 *No wallet registered*\n\n"
-                "Register your Solana wallet first:\n"
-                "`/wallet <your Solana address>`\n\n"
-                "Then use `/leverage` to borrow USDC via Kamino.",
+                "🔑 *No Kamino wallet set*\n\n"
+                "Tell me which wallet holds your Kamino position:\n"
+                "`/setkamino <your Kamino wallet address>`\n\n"
+                "This is the wallet you deposited collateral from on app\\.kamino\\.finance\\.",
                 parse_mode="md",
             )
             return
@@ -152,18 +154,19 @@ def register(client: TelegramClient, db) -> None:
 
         if not data.get("ok"):
             reason = data.get("reason", "error")
-            msg = data.get("message", "Unknown error.")
             if reason == "no_obligation":
                 await client.send_message(
                     chat_id,
                     "📭 *No Kamino position found*\n\n"
-                    f"{msg}\n\n"
-                    "Once you have collateral deposited on [app.kamino.finance](https://app.kamino.finance), "
-                    "use `/leverage` to borrow USDC.",
+                    f"Wallet checked: `{wallet}`\n\n"
+                    "If your collateral is on a different wallet, update it:\n"
+                    "`/setkamino <your Kamino wallet address>`\n\n"
+                    "Otherwise, deposit collateral on [app\\.kamino\\.finance](https://app.kamino.finance) first\\.",
                     parse_mode="md",
                     link_preview=False,
                 )
             else:
+                msg = data.get("message", "Unknown error.")
                 await client.send_message(chat_id, f"❌ Kamino error: {msg}", parse_mode="md")
             return
 

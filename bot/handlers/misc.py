@@ -29,13 +29,15 @@ def register(client: TelegramClient, db) -> None:
         if not pools:
             await client.send_message(
                 event.chat_id,
-                "No open pools right now\\. Check back soon\\!",
+                "⏳ *No matches open yet*\n\n"
+                "Upcoming World Cup pools will appear here\\. Check back soon\\!\n\n"
+                "_Tip: use /pool for the same list\\._",
                 parse_mode="md",
             )
             return
         await client.send_message(
             event.chat_id,
-            "🏟️ *Open Matches*\nSelect a match to bet on:",
+            "🏟️ *Matches* — ⏳ upcoming · 🔴 live\nSelect to bet:",
             buttons=pool_list(pools),
             parse_mode="md",
         )

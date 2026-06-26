@@ -27,6 +27,8 @@ _BASE58 = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 # tg_user_id → pending deposit amount (waiting for wallet address reply)
 _awaiting_wallet: dict[int, float] = {}
+# tg_user_id → True (waiting for custom USDC amount reply)
+_awaiting_custom_amount: dict[int, bool] = {}
 
 
 def phantom_universal_link(tx_base64: str, cluster: str = "mainnet-beta") -> str:
@@ -160,6 +162,8 @@ def register(client: TelegramClient, db, rpc_url: str) -> None:
         data = event.data.decode()
         amount_str = data.split("_")[1]
         if amount_str == "custom":
+            user = await event.get_sender()
+            _awaiting_custom_amount[user.id] = True
             await event.answer()
             await event.respond(
                 "✏️ Reply with the amount in USDC \\(e\\.g\\. 15\\):", parse_mode="md"
@@ -187,9 +191,41 @@ def register(client: TelegramClient, db, rpc_url: str) -> None:
     @client.on(events.NewMessage())
     async def wallet_reply_handler(event):
         user = await event.get_sender()
+        text = (event.raw_text or "").strip()
+
+        # Let slash commands through to their own handlers
+        if text.startswith("/"):
+            return
+
+        # Custom deposit amount flow
+        if user.id in _awaiting_custom_amount:
+            _awaiting_custom_amount.pop(user.id)
+            try:
+                amount = float(text.replace(",", "."))
+                if amount <= 0:
+                    raise ValueError
+            except ValueError:
+                await event.respond(
+                    "❌ Please enter a valid amount, e\\.g\\. `15` or `7\\.5`", parse_mode="md"
+                )
+                return
+            db_user = await get_user(db, user.id)
+            wallet = db_user["solana_wallet"] if db_user else None
+            if wallet:
+                await _start_deposit(client, event.chat_id, user.id, amount, wallet, db, rpc_url)
+            else:
+                _awaiting_wallet[user.id] = amount
+                await event.respond(
+                    "👛 *Enter your Solana wallet address*\n\n"
+                    "The bot will confirm your deposit once USDC arrives from this address\\.\n"
+                    "You only need to do this once\\.",
+                    parse_mode="md",
+                )
+            raise events.StopPropagation
+
+        # Wallet address registration flow
         if user.id not in _awaiting_wallet:
             return
-        text = (event.raw_text or "").strip()
         if not _BASE58.match(text):
             await event.respond(
                 "❌ That doesn't look like a valid Solana address\\. Please try again\\.",

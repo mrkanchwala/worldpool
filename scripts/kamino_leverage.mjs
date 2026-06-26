@@ -70,20 +70,29 @@ async function infoMode(rpc, walletAddr) {
   const market = await loadMarket(rpc);
   const wallet = address(walletAddr);
 
-  // Try vanilla obligation first (most common for regular users)
-  let obligation = await market.getUserVanillaObligation(wallet);
+  // getUserVanillaObligation throws "Could not find vanilla obligation <addr>"
+  // when none exists rather than returning null — catch and treat as no_obligation.
+  let obligation = null;
+  try {
+    obligation = await market.getUserVanillaObligation(wallet);
+  } catch (e) {
+    const msg = e.message || String(e);
+    if (!msg.includes('Could not find')) throw e; // real error, re-throw
+  }
 
   // Fallback: scan all user obligations
   if (!obligation) {
-    const all = await market.getAllUserObligations(wallet);
-    obligation = all.length > 0 ? all[0] : null;
+    try {
+      const all = await market.getAllUserObligations(wallet);
+      obligation = all.length > 0 ? all[0] : null;
+    } catch (_) {}
   }
 
   if (!obligation) {
     return out({
       ok: false,
       reason: 'no_obligation',
-      message: 'No Kamino lending position found for this wallet. Deposit SOL or USDC on app.kamino.finance first.',
+      message: 'No Kamino lending position found for this wallet.',
     });
   }
 

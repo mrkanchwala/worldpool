@@ -85,9 +85,19 @@ CREATE INDEX IF NOT EXISTS idx_lev_user ON leverage_positions(tg_user_id);
 """
 
 
+_MIGRATIONS = [
+    "ALTER TABLE users ADD COLUMN kamino_wallet TEXT",
+]
+
+
 async def init_db(db_path: str = "worldpool.db") -> aiosqlite.Connection:
     conn = await aiosqlite.connect(db_path)
     conn.row_factory = aiosqlite.Row
     await conn.executescript(SCHEMA)
+    for sql in _MIGRATIONS:
+        try:
+            await conn.execute(sql)
+        except Exception:
+            pass  # column already exists
     await conn.commit()
     return conn
