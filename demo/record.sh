@@ -43,9 +43,10 @@ echo "==> [1/8] Starting local demo bot (will take over bot token from VPS)..."
 # The local bot connecting with the same token displaces the VPS bot automatically.
 # After recording, restart VPS bot with: ssh $VPS sudo systemctl restart $SERVICE
 
-# ── 1b. Clean demo DB from previous runs ─────────────────────────────────────
+# ── 1b. Clean demo DB + stale local bot session from previous runs ───────────
 rm -f "$REPO/worldpool_demo.db" "$REPO/worldpool_demo.db-wal" "$REPO/worldpool_demo.db-shm"
-echo "    Demo DB cleared."
+rm -f "$REPO/worldpool_bot.session" "$REPO/worldpool_bot.session-journal"
+echo "    Demo DB + stale local bot session cleared."
 
 # ── 2. Start demo bot locally ─────────────────────────────────────────────────
 echo "==> [2/8] Starting demo bot locally..."
