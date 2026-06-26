@@ -7,7 +7,7 @@ def main_menu() -> list:
     return [
         [Button.inline("💰 Deposit USDC", b"deposit"), Button.inline("🏟️ Browse Matches", b"browse")],
         [Button.inline("📊 My Positions", b"positions"), Button.inline("🏆 Leaderboard", b"leaderboard")],
-        [Button.inline("ℹ️ How it works", b"howto")],
+        [Button.inline("⚡ Leverage", b"leverage"), Button.inline("ℹ️ How it works", b"howto")],
     ]
 
 

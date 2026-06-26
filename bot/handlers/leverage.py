@@ -117,47 +117,45 @@ def _borrow_buttons(available: float):
 
 def register(client: TelegramClient, db) -> None:
 
-    @client.on(events.NewMessage(pattern=r"^/leverage$"))
-    async def leverage_handler(event):
-        sender = await event.get_sender()
-
-        # Rate limit: 60s cooldown per user (each call spawns a Node subprocess + ~10 RPC calls)
+    async def _run_leverage(client, chat_id, sender):
+        """Shared leverage info flow — used by both /leverage command and ⚡ button."""
         loop = asyncio.get_event_loop()
         now = loop.time()
         last = _leverage_cooldown.get(sender.id, 0)
         if now - last < _LEVERAGE_COOLDOWN_SECS:
             remaining = int(_LEVERAGE_COOLDOWN_SECS - (now - last))
-            await event.respond(
+            await client.send_message(
+                chat_id,
                 f"⏳ Please wait {remaining}s before checking leverage again\\.",
                 parse_mode="md",
             )
-            raise events.StopPropagation
+            return
         _leverage_cooldown[sender.id] = now
 
         await upsert_user(db, sender.id, getattr(sender, "username", None))
-
         user = await get_user(db, sender.id)
         wallet = user["solana_wallet"] if user else None
 
         if not wallet:
-            await event.respond(
+            await client.send_message(
+                chat_id,
                 "🔑 *No wallet registered*\n\n"
                 "Register your Solana wallet first:\n"
                 "`/wallet <your Solana address>`\n\n"
                 "Then use `/leverage` to borrow USDC via Kamino.",
                 parse_mode="md",
             )
-            raise events.StopPropagation
+            return
 
-        await event.respond("⏳ Fetching your Kamino position…", parse_mode="md")
-
+        await client.send_message(chat_id, "⏳ Fetching your Kamino position…", parse_mode="md")
         data = await _call_kamino("info", wallet)
 
         if not data.get("ok"):
             reason = data.get("reason", "error")
             msg = data.get("message", "Unknown error.")
             if reason == "no_obligation":
-                await event.respond(
+                await client.send_message(
+                    chat_id,
                     "📭 *No Kamino position found*\n\n"
                     f"{msg}\n\n"
                     "Once you have collateral deposited on [app.kamino.finance](https://app.kamino.finance), "
@@ -166,25 +164,33 @@ def register(client: TelegramClient, db) -> None:
                     link_preview=False,
                 )
             else:
-                await event.respond(
-                    f"❌ Kamino error: {msg}", parse_mode="md"
-                )
-            raise events.StopPropagation
+                await client.send_message(chat_id, f"❌ Kamino error: {msg}", parse_mode="md")
+            return
 
         available = data.get("available_usd", 0)
         if available < 1:
-            await event.respond(
+            await client.send_message(
+                chat_id,
                 "📉 *Borrow capacity too low*\n\n"
                 "Your available borrow amount is below $1 USDC\\. "
                 "Add more collateral on [app.kamino.finance](https://app.kamino.finance)\\.",
                 parse_mode="md",
                 link_preview=False,
             )
-            raise events.StopPropagation
+            return
 
-        msg = _info_message(data)
-        buttons = _borrow_buttons(available)
-        await event.respond(msg, buttons=buttons, parse_mode="md")
+        await client.send_message(chat_id, _info_message(data), buttons=_borrow_buttons(available), parse_mode="md")
+
+    @client.on(events.CallbackQuery(data=b"leverage"))
+    async def leverage_callback_handler(event):
+        await event.answer()
+        sender = await event.get_sender()
+        await _run_leverage(client, event.chat_id, sender)
+
+    @client.on(events.NewMessage(pattern=r"^/leverage$"))
+    async def leverage_handler(event):
+        sender = await event.get_sender()
+        await _run_leverage(client, event.chat_id, sender)
         raise events.StopPropagation
 
     @client.on(events.CallbackQuery(pattern=rb"^lev_borrow_(\d+)$"))

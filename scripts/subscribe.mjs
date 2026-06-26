@@ -1,6 +1,9 @@
 /**
- * TxLINE subscription script — free World Cup tier (Service Level 12).
+ * TxLINE subscription script — MAINNET, free World Cup tier (Service Level 12).
  * Run once to get API token saved to keys/txline_token.json
+ *
+ * Pre-requisite: wallet keys/txline-dev.json needs ~0.01 mainnet SOL for tx fees.
+ * Wallet: sNFu2H3BsZA5rSmSPttX5mFtooWYdcAdoPb8FFnjoSe
  *
  * Usage: node scripts/subscribe.mjs
  */
@@ -17,14 +20,14 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
 
-// ── Config ────────────────────────────────────────────────────────────────────
-const DEVNET_RPC = "https://api.devnet.solana.com";
-const TXLINE_BASE = "https://txline-dev.txodds.com";
-const PROGRAM_ID = new PublicKey("6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J");
-const TXLINE_MINT = new PublicKey("4Zao8ocPhmMgq7PdsYWyxvqySMGx7xb9cMftPMkEokRG");
-const USDT_MINT = new PublicKey("ELWTKspHKCnCfCiCiqYw1EDH77k8VCP74dK9qytG2Ujh");
-const SERVICE_LEVEL_ID = 1; // World Cup + Friendlies, 60s delay (free). Devnet may not have L12.
-const WEEKS = 4;             // minimum 4 weeks
+// ── Config — MAINNET ──────────────────────────────────────────────────────────
+const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+const TXLINE_BASE = "https://txline.txodds.com";
+const PROGRAM_ID = new PublicKey("9ExbZjAapQww1vfcisDmrngPinHTEfpjYRWMunJgcKaA");
+const TXLINE_MINT = new PublicKey("Zhw9TVKp68a1QrftncMSd6ELXKDtpVMNuMGr1jNwdeL");
+const USDT_MINT = new PublicKey("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB");
+const SERVICE_LEVEL_ID = 12; // World Cup + International Friendlies, real-time (free)
+const WEEKS = 4;              // minimum 4 weeks
 
 // ── Load keypair ──────────────────────────────────────────────────────────────
 const keypairPath = path.join(ROOT, "keys", "txline-dev.json");
@@ -32,7 +35,7 @@ const keypairData = JSON.parse(fs.readFileSync(keypairPath, "utf-8"));
 const keypair = Keypair.fromSecretKey(new Uint8Array(keypairData));
 console.log("Wallet:", keypair.publicKey.toBase58());
 
-const connection = new Connection(DEVNET_RPC, "confirmed");
+const connection = new Connection(RPC_URL, "confirmed");
 
 // ── Step 1: Get guest JWT ─────────────────────────────────────────────────────
 async function getGuestJwt() {
@@ -145,15 +148,10 @@ async function main() {
     process.exit(1);
   }
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf-8"));
-  // IDL ships with the mainnet address; override to the devnet program for this run
-  idl.address = PROGRAM_ID.toBase58();
 
   console.log("Step 1: Getting guest JWT...");
   const jwt = await getGuestJwt();
   console.log("JWT:", jwt.slice(0, 30) + "...");
-
-  console.log("Step 2: Requesting devnet USDT...");
-  await requestDevnetUsdt(idl);
 
   console.log(`Step 3: Subscribing on-chain (service_level=${SERVICE_LEVEL_ID}, weeks=${WEEKS})...`);
   const txSig = await subscribeOnChain(idl);
