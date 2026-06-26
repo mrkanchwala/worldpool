@@ -32,6 +32,7 @@ ODDS_SHIFT_THRESHOLD = 5.0  # % shift to trigger alert
 # Shared in-memory state
 odds_cache: dict[str, OddsEvent] = {}  # fixture_id → latest OddsEvent
 prev_odds_cache: dict[str, OddsEvent] = {}  # for shift detection
+custom_stake_state: dict[int, dict] = {}  # tg_user_id → {pool_id, outcome} for custom-amount flow
 
 
 async def main() -> None:
@@ -45,7 +46,7 @@ async def main() -> None:
     # Register all handlers
     h_start.register(client, db)
     h_deposit.register(client, db, RPC_URL)
-    h_pool.register(client, db, odds_cache)
+    h_pool.register(client, db, odds_cache, custom_stake_state)
     h_positions.register(client, db)
     h_misc.register(client, db)
     h_admin.register(client, db)

@@ -4,10 +4,12 @@
  *
  * Usage: node scripts/subscribe.mjs
  */
-import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
-import { AnchorProvider, Program, setProvider, BN } from "@coral-xyz/anchor";
-import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } from "@solana/spl-token";
+import { Connection, Keypair, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from "@solana/web3.js";
+import anchorPkg from "@coral-xyz/anchor";
+const { AnchorProvider, Program, setProvider } = anchorPkg;
+import { TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddress, getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction } from "@solana/spl-token";
 import axios from "axios";
+import nacl from "tweetnacl";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -21,7 +23,7 @@ const TXLINE_BASE = "https://txline-dev.txodds.com";
 const PROGRAM_ID = new PublicKey("6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J");
 const TXLINE_MINT = new PublicKey("4Zao8ocPhmMgq7PdsYWyxvqySMGx7xb9cMftPMkEokRG");
 const USDT_MINT = new PublicKey("ELWTKspHKCnCfCiCiqYw1EDH77k8VCP74dK9qytG2Ujh");
-const SERVICE_LEVEL_ID = 12; // real-time World Cup + Friendlies (free)
+const SERVICE_LEVEL_ID = 1; // World Cup + Friendlies, 60s delay (free). Devnet may not have L12.
 const WEEKS = 4;             // minimum 4 weeks
 
 // ── Load keypair ──────────────────────────────────────────────────────────────
@@ -77,7 +79,25 @@ async function subscribeOnChain(idl) {
 
   const [pricingMatrix] = PublicKey.findProgramAddressSync([Buffer.from("pricing_matrix")], PROGRAM_ID);
   const [tokenTreasuryPda] = PublicKey.findProgramAddressSync([Buffer.from("token_treasury_v2")], PROGRAM_ID);
+  // tokenTreasuryVault is the ATA owned by the treasury PDA (NOT the PDA itself — prior bug)
+  const tokenTreasuryVault = getAssociatedTokenAddressSync(TXLINE_MINT, tokenTreasuryPda, true, TOKEN_2022_PROGRAM_ID);
   const userTokenAta = await getAssociatedTokenAddress(TXLINE_MINT, keypair.publicKey, false, TOKEN_2022_PROGRAM_ID);
+
+  // Program requires the user's TxL ATA to be initialized — even for the free tier (0 charge).
+  const ataInfo = await connection.getAccountInfo(userTokenAta);
+  if (!ataInfo) {
+    console.log("Creating user TxL ATA:", userTokenAta.toBase58());
+    const createIx = createAssociatedTokenAccountInstruction(
+      keypair.publicKey, // payer
+      userTokenAta,      // ata
+      keypair.publicKey, // owner
+      TXLINE_MINT,       // mint
+      TOKEN_2022_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+    );
+    const sig = await sendAndConfirmTransaction(connection, new Transaction().add(createIx), [keypair]);
+    console.log("ATA created:", sig);
+  }
 
   const tx = await program.methods
     .subscribe(SERVICE_LEVEL_ID, WEEKS)
@@ -86,8 +106,11 @@ async function subscribeOnChain(idl) {
       pricingMatrix,
       tokenMint: TXLINE_MINT,
       userTokenAccount: userTokenAta,
-      tokenTreasuryVault: tokenTreasuryPda,
+      tokenTreasuryVault,
+      tokenTreasuryPda,
       tokenProgram: TOKEN_2022_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
     })
     .rpc();
 
@@ -99,8 +122,9 @@ async function subscribeOnChain(idl) {
 async function activateToken(jwt, txSig, leagues = []) {
   // Message format per TxLINE quickstart docs: "{txSig}:{leagues.join(",")}:{jwt}"
   const message = `${txSig}:${leagues.join(",")}:${jwt}`;
-  const msgBytes = Buffer.from(message);
-  const sigBytes = keypair.sign(msgBytes).signature;
+  const msgBytes = new TextEncoder().encode(message);
+  // ed25519 detached signature per TxLINE docs (web3.js Keypair has no .sign())
+  const sigBytes = nacl.sign.detached(msgBytes, keypair.secretKey);
   const walletSignature = Buffer.from(sigBytes).toString("base64");
 
   const r = await axios.post(
@@ -117,10 +141,12 @@ async function main() {
   const idlPath = path.join(ROOT, "keys", "txline-devnet.idl.json");
   if (!fs.existsSync(idlPath)) {
     console.error("IDL not found at", idlPath);
-    console.error("Fetch it first: curl https://txline-docs.txodds.com/api-reference/openapi.json > keys/txline-devnet.idl.json");
+    console.error("Fetch it first: curl -sL https://raw.githubusercontent.com/txodds/tx-on-chain/main/idl/txoracle.json -o keys/txline-devnet.idl.json");
     process.exit(1);
   }
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf-8"));
+  // IDL ships with the mainnet address; override to the devnet program for this run
+  idl.address = PROGRAM_ID.toBase58();
 
   console.log("Step 1: Getting guest JWT...");
   const jwt = await getGuestJwt();
@@ -129,7 +155,7 @@ async function main() {
   console.log("Step 2: Requesting devnet USDT...");
   await requestDevnetUsdt(idl);
 
-  console.log("Step 3: Subscribing on-chain (service_level=12, weeks=4)...");
+  console.log(`Step 3: Subscribing on-chain (service_level=${SERVICE_LEVEL_ID}, weeks=${WEEKS})...`);
   const txSig = await subscribeOnChain(idl);
 
   console.log("Step 4: Activating API token...");

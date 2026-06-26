@@ -1,0 +1,21 @@
+[toolchain]
+package_manager = "yarn"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+worldpool = "8HcYBkhvfiRJXwr3fGEDDeU6Z8tYsVr46x44wKmfspWL"
+
+[programs.devnet]
+worldpool = "8HcYBkhvfiRJXwr3fGEDDeU6Z8tYsVr46x44wKmfspWL"
+
+[provider]
+cluster = "devnet"
+wallet = "keys/txline-dev.json"
+
+[scripts]
+test = "cargo test"
+
+[hooks]

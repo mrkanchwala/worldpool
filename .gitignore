@@ -1,0 +1,31 @@
+# Secrets — never commit
+.env
+keys/*.json
+keys/*.key
+*.session
+*.session-journal
+
+# Node
+/node_modules/
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Anchor build artifacts
+anchor/worldpool/target/
+anchor/worldpool/.anchor/
+anchor/worldpool/node_modules/
+
+# DB
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+/tmp/

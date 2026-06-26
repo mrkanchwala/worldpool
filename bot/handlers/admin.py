@@ -6,6 +6,8 @@ import re
 from telethon import TelegramClient, events
 
 from db import queries
+from bot.alerts import fulltime_alert
+from txline.parser import ScoreEvent
 
 ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
 
@@ -14,6 +16,9 @@ _CREATE_PATTERN = re.compile(
     r"^/createpool\s+(.+?)\s+vs\s+(.+?)\s+(\S+)(?:\s+(.+))?$",
     re.IGNORECASE,
 )
+
+# /settle <pool_id> <home|draw|away>
+_SETTLE_PATTERN = re.compile(r"^/settle\s+(\S+)\s+(home|draw|away)$", re.IGNORECASE)
 
 
 def register(client: TelegramClient, db) -> None:
@@ -79,4 +84,70 @@ def register(client: TelegramClient, db) -> None:
         for p in pools:
             lines.append(f"• `{p['pool_id']}` — {p['home_team']} vs {p['away_team']} \\(fixture: {p['fixture_id']}\\)")
         await event.respond("\n".join(lines), parse_mode="md")
+        raise events.StopPropagation
+
+    @client.on(events.NewMessage(pattern=r"^/settle"))
+    async def settle_handler(event):
+        """Manual settlement — admin only. Mirrors the TxLINE full_time path for
+        demos when live SSE scores aren't available. Same DB writes + payout logic."""
+        user = await event.get_sender()
+        if ADMIN_TG_ID and user.id != ADMIN_TG_ID:
+            await event.respond("🚫 Operator command only\\.", parse_mode="md")
+            raise events.StopPropagation
+
+        m = _SETTLE_PATTERN.match(event.raw_text.strip())
+        if not m:
+            await event.respond(
+                "Usage: `/settle <pool_id> <home|draw|away>`", parse_mode="md"
+            )
+            raise events.StopPropagation
+
+        pool_id = m.group(1).strip()
+        outcome = m.group(2).strip().lower()
+
+        pool = await queries.get_pool(db, pool_id)
+        if not pool:
+            await event.respond("Pool not found\\.", parse_mode="md")
+            raise events.StopPropagation
+        if pool["status"] == "settled":
+            await event.respond("Pool already settled\\.", parse_mode="md")
+            raise events.StopPropagation
+
+        # Same sequence as main.py handle_score full_time branch
+        await queries.close_betting(db, pool["fixture_id"])
+        payouts, total_pool = await queries.mark_positions_settled(db, pool_id, outcome)
+        await queries.settle_pool(db, pool_id, outcome)
+
+        if payouts:
+            winner_ids = [p["tg_user_id"] for p in payouts]
+            usernames = await queries.get_users_by_ids(db, winner_ids)
+            for p in payouts:
+                p["username"] = usernames.get(p["tg_user_id"], "")
+                await queries.credit_balance(db, p["tg_user_id"], p["payout"])
+
+        # Synthetic score reflecting the declared outcome (for the alert card)
+        scoreline = {"home": (1, 0), "away": (0, 1), "draw": (1, 1)}[outcome]
+        score_event = ScoreEvent(
+            fixture_id=pool["fixture_id"],
+            competition_id=pool["competition_id"],
+            home_team=pool["home_team"],
+            away_team=pool["away_team"],
+            home_score=scoreline[0],
+            away_score=scoreline[1],
+            game_phase=5,
+            minute=90,
+            event_type="full_time",
+            event_id=f"manual_{pool_id}",
+            raw={"manual": True},
+        )
+        msg = fulltime_alert(score_event, payouts, total_pool)
+        chats = await queries.get_subscribed_chats(db, pool_id)
+        for chat_id in chats:
+            await client.send_message(chat_id, msg, parse_mode="md")
+
+        await event.respond(
+            f"✅ Settled `{pool_id}` → *{outcome}*\\. "
+            f"Pool ${total_pool:.2f}, {len(payouts)} winner\\(s\\) paid\\.",
+            parse_mode="md",
+        )
         raise events.StopPropagation

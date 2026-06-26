@@ -1,0 +1,17 @@
+{
+  "name": "worldpool-txline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TxLINE on-chain subscription helper for WorldPool (devnet free World Cup tier)",
+  "scripts": {
+    "subscribe": "node scripts/subscribe.mjs"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.30.1",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.95.4",
+    "axios": "^1.7.7",
+    "tweetnacl": "^1.0.3"
+  }
+}
