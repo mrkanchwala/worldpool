@@ -45,7 +45,7 @@ echo "==> [1/8] Starting local demo bot (will take over bot token from VPS)..."
 
 # ── 2. Start demo bot locally ─────────────────────────────────────────────────
 echo "==> [2/8] Starting demo bot locally..."
-"$VENV" demo/demo_match.py > /tmp/worldpool-demo-bot.log 2>&1 &
+PYTHONPATH="$REPO" "$VENV" demo/demo_match.py > /tmp/worldpool-demo-bot.log 2>&1 &
 BOT_PID=$!
 echo "    PID $BOT_PID — waiting 6s for Telegram connect..."
 sleep 6
@@ -99,7 +99,7 @@ echo "    ✅ Recording started."
 # ── 6. Run auto-driver ────────────────────────────────────────────────────────
 echo "==> [5/8] Auto-driver running (controls @txodds_mkbot)..."
 echo ""
-"$VENV" demo/drive_demo.py
+PYTHONPATH="$REPO" "$VENV" demo/drive_demo.py
 echo ""
 
 # ── 7. Hold on payout card, then stop ────────────────────────────────────────
