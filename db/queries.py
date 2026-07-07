@@ -35,6 +35,17 @@ async def get_user(db: aiosqlite.Connection, tg_user_id: int) -> Optional[aiosql
         return await cur.fetchone()
 
 
+async def set_deposit_address(db: aiosqlite.Connection, tg_user_id: int, address: str) -> None:
+    """Store this user's dedicated deposit address (public — safe to store).
+    The matching private key is never persisted; it's re-derived on demand
+    from the operator keyfile (see bot/deposit_wallet.py)."""
+    await db.execute(
+        "UPDATE users SET deposit_address = ? WHERE tg_user_id = ?",
+        (address, tg_user_id),
+    )
+    await db.commit()
+
+
 async def credit_balance(db: aiosqlite.Connection, tg_user_id: int, amount: float) -> None:
     await db.execute(
         "UPDATE users SET usdc_balance = usdc_balance + ? WHERE tg_user_id = ?",
@@ -104,6 +115,16 @@ async def get_pool_by_fixture(db: aiosqlite.Connection, fixture_id: str) -> Opti
         return await cur.fetchone()
 
 
+async def update_pool_teams(db: aiosqlite.Connection, fixture_id: str, home_team: str, away_team: str) -> None:
+    """Backfill real team names onto a pool that was auto-created from an odds
+    tick before team names were known (odds payload doesn't reliably carry them)."""
+    await db.execute(
+        "UPDATE pools SET home_team = ?, away_team = ? WHERE fixture_id = ? AND home_team LIKE 'TBD%'",
+        (home_team, away_team, fixture_id),
+    )
+    await db.commit()
+
+
 async def close_betting(db: aiosqlite.Connection, fixture_id: str) -> None:
     await db.execute(
         "UPDATE pools SET status = 'betting_closed' WHERE fixture_id = ? AND status = 'open'",
@@ -159,8 +180,10 @@ async def get_pool_positions(db: aiosqlite.Connection, pool_id: str) -> list[aio
 
 async def mark_positions_settled(
     db: aiosqlite.Connection, pool_id: str, winning_outcome: str
-) -> tuple[list[dict], float]:
-    """Mark positions won/lost. Returns (payouts, total_pool_usdc)."""
+) -> tuple[list[dict], list[dict], float]:
+    """Mark positions won/lost. Returns (payouts, losses, total_pool_usdc) —
+    losses included so settlement can show the full win/loss picture, not
+    just winners."""
     async with db.execute("SELECT * FROM positions WHERE pool_id = ?", (pool_id,)) as cur:
         positions = await cur.fetchall()
 
@@ -178,14 +201,16 @@ async def mark_positions_settled(
         )
         payouts.append({"tg_user_id": pos["tg_user_id"], "payout": payout, "stake": pos["amount_usdc"]})
 
+    losses = []
     for pos in losers:
         await db.execute(
             "UPDATE positions SET status = 'lost', payout_amount = 0, settled_at = datetime('now') WHERE position_id = ?",
             (pos["position_id"],),
         )
+        losses.append({"tg_user_id": pos["tg_user_id"], "stake": pos["amount_usdc"]})
 
     await db.commit()
-    return payouts, total_pool
+    return payouts, losses, total_pool
 
 
 # ── Chat subscriptions ─────────────────────────────────────────────────────────

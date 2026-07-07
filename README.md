@@ -2,7 +2,7 @@
 
 **Self-running World Cup prediction pools on Telegram. Powered by TxLINE live data. Settled on Solana. Leveraged by Kamino.**
 
-> Built for the [Superteam World Cup Hackathon](https://superteam.fun) · Tracks: Prediction Markets · Consumer/Fan Experiences
+> Built for the [Superteam World Cup Hackathon](https://superteam.fun) · Track: Prediction Markets and Settlement
 > Built by **[Quadriga Automations](https://quadrigasolutions.com)** · Murtaza Kanchwala
 
 ---

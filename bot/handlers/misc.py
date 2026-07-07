@@ -4,6 +4,7 @@ from __future__ import annotations
 from telethon import TelegramClient, events
 
 from bot.buttons import pool_list, deposit_amounts
+from bot.dm import send_private
 from db import queries
 
 HOWTO_TEXT = (
@@ -83,8 +84,8 @@ def register(client: TelegramClient, db) -> None:
         user_row = await queries.get_user(db, user.id)
         balance = user_row["usdc_balance"] if user_row else 0.0
         await event.answer()
-        await client.send_message(
-            event.chat_id,
+        await send_private(
+            client, event, event.sender_id,
             f"💸 *Withdraw*\n\n"
             f"Available: *${balance:.2f} USDC*\n\n"
             f"Reply with your Solana wallet address to request a withdrawal\\.\n"

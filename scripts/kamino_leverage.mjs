@@ -20,6 +20,7 @@ import {
   KaminoMarket,
   KaminoAction,
   VanillaObligation,
+  ObligationTypeTag,
   PROGRAM_ID,
   getMedianSlotDurationInMsFromLastEpochs,
 } from '@kamino-finance/klend-sdk';
@@ -39,7 +40,6 @@ const MAIN_MARKET   = address('7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF');
 const USDC_MINT     = address('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const USDC_DECIMALS = 6;
 const RPC_URL       = process.env.KAMINO_RPC_URL || 'https://api.mainnet-beta.solana.com';
-const CLUSTER       = process.env.KAMINO_CLUSTER  || 'mainnet-beta';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -52,11 +52,6 @@ function fail(reason, message) {
   process.exit(0);
 }
 
-function phantomUrl(txBase64) {
-  const encoded = encodeURIComponent(txBase64);
-  return `https://phantom.app/ul/v1/signAndSendTransaction?transaction=${encoded}&cluster=${CLUSTER}`;
-}
-
 async function loadMarket(rpc) {
   const slotDuration = await getMedianSlotDurationInMsFromLastEpochs();
   const market = await KaminoMarket.load(rpc, MAIN_MARKET, slotDuration);
@@ -64,14 +59,14 @@ async function loadMarket(rpc) {
   return market;
 }
 
-// ── Info mode ──────────────────────────────────────────────────────────────────
-
-async function infoMode(rpc, walletAddr) {
-  const market = await loadMarket(rpc);
-  const wallet = address(walletAddr);
-
-  // getUserVanillaObligation throws "Could not find vanilla obligation <addr>"
-  // when none exists rather than returning null — catch and treat as no_obligation.
+/**
+ * Find a wallet's obligation regardless of type — tries the plain "vanilla"
+ * lend/borrow obligation first, then falls back to scanning for a Multiply
+ * (leveraged) position. Kamino's obligation-tag scheme (ObligationTypeTag):
+ * Vanilla=0, Multiply=1, Lending=2, Leverage=3 (+ fixed-rate variants).
+ * Returns { obligation, tag } or { obligation: null, tag: null }.
+ */
+async function findObligation(market, wallet, slot) {
   let obligation = null;
   try {
     obligation = await market.getUserVanillaObligation(wallet);
@@ -79,20 +74,30 @@ async function infoMode(rpc, walletAddr) {
     const msg = e.message || String(e);
     if (!msg.includes('Could not find')) throw e; // real error, re-throw
   }
+  if (obligation) return { obligation, tag: ObligationTypeTag.Vanilla };
 
-  // Fallback: scan all user obligations
-  if (!obligation) {
-    try {
-      const all = await market.getAllUserObligations(wallet);
-      obligation = all.length > 0 ? all[0] : null;
-    } catch (_) {}
+  const multiplyObligations = await market.getUserObligationsByTag(ObligationTypeTag.Multiply, wallet, slot);
+  if (multiplyObligations && multiplyObligations.length > 0) {
+    return { obligation: multiplyObligations[0], tag: ObligationTypeTag.Multiply };
   }
+
+  return { obligation: null, tag: null };
+}
+
+// ── Info mode ──────────────────────────────────────────────────────────────────
+
+async function infoMode(rpc, walletAddr) {
+  const market = await loadMarket(rpc);
+  const wallet = address(walletAddr);
+  const slot = await rpc.getSlot().send();
+
+  const { obligation, tag } = await findObligation(market, wallet, slot);
 
   if (!obligation) {
     return out({
       ok: false,
       reason: 'no_obligation',
-      message: 'No Kamino lending position found for this wallet.',
+      message: 'No Kamino lending or Multiply position found for this wallet.',
     });
   }
 
@@ -106,7 +111,6 @@ async function infoMode(rpc, walletAddr) {
   // USDC borrow APY
   let borrowApy = null;
   try {
-    const slot = await rpc.getSlot().send();
     const reserves = market.getReservesByMint(USDC_MINT);
     if (reserves && reserves.length > 0) {
       borrowApy = parseFloat((reserves[0].totalBorrowAPY(slot) * 100).toFixed(2));
@@ -115,6 +119,7 @@ async function infoMode(rpc, walletAddr) {
 
   out({
     ok: true,
+    position_type: tag === ObligationTypeTag.Multiply ? 'multiply' : 'vanilla',
     collateral_usd: collateral,
     borrowed_usd: borrowed,
     borrow_limit_usd: borrowLimit,
@@ -134,13 +139,10 @@ async function borrowMode(rpc, walletAddr, amountUsdc) {
 
   const market = await loadMarket(rpc);
   const wallet = address(walletAddr);
+  const slot = await rpc.getSlot().send();
 
-  // Verify user has collateral
-  let obligation = await market.getUserVanillaObligation(wallet);
-  if (!obligation) {
-    const all = await market.getAllUserObligations(wallet);
-    obligation = all.length > 0 ? all[0] : null;
-  }
+  // Verify user has collateral — vanilla lend/borrow or a Multiply position
+  const { obligation, tag } = await findObligation(market, wallet, slot);
   if (!obligation) {
     return fail('no_obligation', 'No Kamino position. Deposit collateral on app.kamino.finance first.');
   }
@@ -166,23 +168,36 @@ async function borrowMode(rpc, walletAddr, amountUsdc) {
     signTransactions: async (txs) => txs,
   };
 
-  // Build borrow transaction
-  const borrowAction = await KaminoAction.buildBorrowTxns(
-    market,
-    amountLamports,
-    USDC_MINT,
-    mockSigner,
-    new VanillaObligation(PROGRAM_ID),
-    true,   // requestElevationGroup
-    undefined
-  );
+  const reserves = market.getReservesByMint(USDC_MINT);
+  if (!reserves || reserves.length === 0) {
+    return fail('no_reserve', 'Could not find a USDC reserve on this market.');
+  }
+  const reserveAddress = reserves[0].address;
+
+  // Build borrow transaction — current SDK props-object API (not the older
+  // positional-args form). Passes the already-resolved obligation instance
+  // directly, so this works for both vanilla and Multiply positions without
+  // needing to reconstruct the exact collateral/debt token pair ourselves.
+  const borrowAction = await KaminoAction.buildBorrowTxns({
+    kaminoMarket: market,
+    amount: amountLamports,
+    reserveAddress,
+    owner: mockSigner,
+    obligation: obligation ?? new VanillaObligation(PROGRAM_ID),
+    useV2Ixs: true,
+    scopeRefreshConfig: undefined,
+    currentSlot: slot,
+    requestElevationGroup: true,
+    includeAtaIxs: true,
+  });
 
   // Serialize all instructions into a base64 transaction
-  const ixs = KaminoAction.actionToIxs(borrowAction);
-  const allIxs = [...ixs.setupIxs, ...ixs.inIxs, ...ixs.inPostIxs, ...ixs.cleanupIxs].filter(Boolean);
+  // actionToIxs already returns the flat, correctly-ordered instruction list
+  // in this SDK version — it is NOT an object with setupIxs/inIxs/etc sub-arrays.
+  const allIxs = KaminoAction.actionToIxs(borrowAction).filter(Boolean);
 
   // Convert @solana/kit instructions to web3.js v1 TransactionInstruction format
-  // then build a VersionedTransaction for Phantom signing
+  // then build a VersionedTransaction for wallet signing
   const { Connection, PublicKey, TransactionInstruction, VersionedTransaction, TransactionMessage } =
     await import('@solana/web3.js');
 
@@ -191,7 +206,9 @@ async function borrowMode(rpc, walletAddr, amountUsdc) {
 
   const legacyIxs = allIxs.map((ix) => {
     const programId = new PublicKey(ix.programAddress.toString());
-    const keys = ix.accounts.map((acc) => ({
+    // accounts is optional per @solana/kit's Instruction type — some
+    // instructions legitimately have none.
+    const keys = (ix.accounts || []).map((acc) => ({
       pubkey: new PublicKey(acc.address.toString()),
       isSigner: acc.role === 2 || acc.role === 3,  // writable signer or readonly signer
       isWritable: acc.role === 1 || acc.role === 3, // writable
@@ -213,11 +230,9 @@ async function borrowMode(rpc, walletAddr, amountUsdc) {
   const tx = new VersionedTransaction(message);
   const txBase64 = Buffer.from(tx.serialize()).toString('base64');
 
-  // USDC borrow APY
+  // USDC borrow APY (reuse the slot already fetched above — no need to re-query)
   let borrowApy = null;
   try {
-    const slot = await rpc.getSlot().send();
-    const reserves = market.getReservesByMint(USDC_MINT);
     if (reserves && reserves.length > 0) {
       borrowApy = parseFloat((reserves[0].totalBorrowAPY(slot) * 100).toFixed(2));
     }
@@ -225,11 +240,11 @@ async function borrowMode(rpc, walletAddr, amountUsdc) {
 
   out({
     ok: true,
+    position_type: tag === ObligationTypeTag.Multiply ? 'multiply' : 'vanilla',
     amount_usdc: amountUsdc,
     tx_base64: txBase64,
-    phantom_url: phantomUrl(txBase64),
     estimated_apy_pct: borrowApy,
-    note: 'Transaction unsigned — user must sign in Phantom. Borrowed USDC will arrive in wallet; send to WorldPool operator to credit balance.',
+    note: 'Transaction unsigned — sign via the WalletConnect link (any Solana wallet). Borrowed USDC will arrive in wallet; send to WorldPool operator to credit balance.',
   });
 }
 

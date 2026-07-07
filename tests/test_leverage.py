@@ -241,7 +241,7 @@ async def test_repayment_reminder_detected(db):
     await queries.create_leverage_position(db, 3001, 20.0, "KaminoBorrowTx")
 
     # Settle pool
-    payouts, total_pool = await queries.mark_positions_settled(db, pool_id, "home")
+    payouts, losses, total_pool = await queries.mark_positions_settled(db, pool_id, "home")
     assert payouts[0]["tg_user_id"] == 3001
 
     # Confirm leverage position still open (not auto-repaid)

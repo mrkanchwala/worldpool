@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
+    "@walletconnect/sign-client": "^2.17.0",
     "@kamino-finance/farms-sdk": "^3.2.26",
     "@kamino-finance/klend-sdk": "^9.1.2",
     "@solana/kit": "^2.3.0",

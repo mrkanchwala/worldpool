@@ -15,7 +15,9 @@ from db.queries import (
     create_leverage_position,
     get_open_leverage_positions,
 )
-from bot.handlers.deposit import phantom_universal_link
+from bot.dm import send_private
+from bot.handlers.wallet import mask_address
+from bot.wallet_connect import sign_via_walletconnect, broadcast_signed_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +119,9 @@ def _borrow_buttons(available: float):
 
 def register(client: TelegramClient, db) -> None:
 
-    async def _run_leverage(client, chat_id, sender):
+    async def _run_leverage(client, event, sender):
         """Shared leverage info flow — used by both /leverage command and ⚡ button."""
+        chat_id = event.chat_id
         loop = asyncio.get_event_loop()
         now = loop.time()
         last = _leverage_cooldown.get(sender.id, 0)
@@ -155,10 +158,10 @@ def register(client: TelegramClient, db) -> None:
         if not data.get("ok"):
             reason = data.get("reason", "error")
             if reason == "no_obligation":
-                await client.send_message(
-                    chat_id,
+                await send_private(
+                    client, event, sender.id,
                     "📭 *No Kamino position found*\n\n"
-                    f"Wallet checked: `{wallet}`\n\n"
+                    f"Wallet checked: `{mask_address(wallet)}`\n\n"
                     "If your collateral is on a different wallet, update it:\n"
                     "`/setkamino <your Kamino wallet address>`\n\n"
                     "Otherwise, deposit collateral on [app\\.kamino\\.finance](https://app.kamino.finance) first\\.",
@@ -182,18 +185,22 @@ def register(client: TelegramClient, db) -> None:
             )
             return
 
-        await client.send_message(chat_id, _info_message(data), buttons=_borrow_buttons(available), parse_mode="md")
+        # Reveals collateral/borrow figures — personal financial info, DM it.
+        await send_private(
+            client, event, sender.id,
+            _info_message(data), buttons=_borrow_buttons(available), parse_mode="md",
+        )
 
     @client.on(events.CallbackQuery(data=b"leverage"))
     async def leverage_callback_handler(event):
         await event.answer()
         sender = await event.get_sender()
-        await _run_leverage(client, event.chat_id, sender)
+        await _run_leverage(client, event, sender)
 
     @client.on(events.NewMessage(pattern=r"^/leverage$"))
     async def leverage_handler(event):
         sender = await event.get_sender()
-        await _run_leverage(client, event.chat_id, sender)
+        await _run_leverage(client, event, sender)
         raise events.StopPropagation
 
     @client.on(events.CallbackQuery(pattern=rb"^lev_borrow_(\d+)$"))
@@ -211,16 +218,24 @@ def register(client: TelegramClient, db) -> None:
         )
 
 
+_KAMINO_MAINNET_RPC = os.environ.get("KAMINO_RPC_URL", "https://api.mainnet-beta.solana.com")
+
+
 async def _handle_borrow(event, db, amount: float) -> None:
-    """Shared borrow flow: call Kamino bridge, return Phantom Universal Link."""
+    """Shared borrow flow: call Kamino bridge, sign via WalletConnect (wallet-
+    agnostic — Phantom/Solflare/Backpack/Trust/etc., not Phantom-only), broadcast."""
     await event.answer()
 
     sender = await event.get_sender()
     user = await get_user(db, sender.id)
-    wallet = user["solana_wallet"] if user else None
+    # Same priority as _run_leverage's lookup — a user who only ran /setkamino
+    # (the documented, dedicated way to register a Kamino wallet) must borrow
+    # against that same wallet, not silently fall through to a missing/wrong one.
+    wallet = (user["kamino_wallet"] if user and user["kamino_wallet"] else
+              user["solana_wallet"] if user else None)
 
     if not wallet:
-        await event.respond("❌ No wallet registered\\. Use `/wallet <address>` first\\.", parse_mode="md")
+        await event.respond("❌ No wallet registered\\. Use `/setkamino <address>` or `/wallet <address>` first\\.", parse_mode="md")
         return
 
     await event.respond(f"⏳ Generating borrow transaction for ${amount:.2f} USDC…", parse_mode="md")
@@ -234,20 +249,58 @@ async def _handle_borrow(event, db, amount: float) -> None:
         return
 
     tx_b64   = data["tx_base64"]
-    ph_url   = data["phantom_url"]
     apy      = data.get("estimated_apy_pct")
     apy_str  = f" (APY: {apy:.1f}%)" if apy is not None else ""
 
     # Record pending leverage position (before tx confirmed)
     lev_id = await create_leverage_position(db, sender.id, amount)
 
-    await event.respond(
-        f"⚡ *Borrow ${amount:.2f} USDC via Kamino*{apy_str}\n\n"
-        f"1\\. Sign the transaction in Phantom:\n[Open Phantom]({ph_url})\n\n"
-        f"2\\. Once signed, USDC arrives in your wallet\\.\n\n"
-        f"3\\. Use `/deposit` to send it to WorldPool and start betting\\.\n\n"
-        f"⚠️ _Remember to repay your Kamino loan after your bet settles to avoid liquidation\\._\n\n"
-        f"_Leverage position ID: `{lev_id}`_",
+    client = event.client
+
+    async def _send_connect_link(uri: str) -> None:
+        await send_private(
+            client, event, sender.id,
+            f"⚡ *Borrow ${amount:.2f} USDC via Kamino*{apy_str}\n\n"
+            f"1\\. Open your Solana wallet \\(Phantom, Solflare, Backpack, Trust, etc\\.\\) "
+            f"and connect via WalletConnect:\n`{uri}`\n\n"
+            f"2\\. Approve the connection, then approve the transaction\\.\n\n"
+            f"3\\. Once signed, USDC arrives in your wallet\\. Use `/deposit` to send it "
+            f"to WorldPool and start betting\\.\n\n"
+            f"⚠️ _Remember to repay your Kamino loan after your bet settles to avoid liquidation\\._\n\n"
+            f"_Leverage position ID: `{lev_id}`_",
+            parse_mode="md",
+            link_preview=False,
+        )
+
+    result = await sign_via_walletconnect(tx_b64, "mainnet", _send_connect_link)
+
+    if result.get("stage") != "signed":
+        reason = result.get("reason", "error")
+        msg = result.get("message", "Unknown error.")
+        await send_private(
+            client, event, sender.id,
+            f"❌ *Borrow not completed* \\({reason}\\)\n{msg}\n\n"
+            f"_Leverage position ID: `{lev_id}`_ — no funds moved\\.",
+            parse_mode="md",
+        )
+        return
+
+    try:
+        sig = await broadcast_signed_transaction(_KAMINO_MAINNET_RPC, result["signed_tx_base64"])
+    except Exception as e:
+        logger.exception("Broadcast of WalletConnect-signed borrow tx failed")
+        await send_private(
+            client, event, sender.id,
+            f"❌ *Signed, but broadcast failed:* {e}\n\n"
+            f"_Leverage position ID: `{lev_id}`_ — your wallet was not debited\\.",
+            parse_mode="md",
+        )
+        return
+
+    await send_private(
+        client, event, sender.id,
+        f"✅ *Borrow confirmed* — ${amount:.2f} USDC on the way to your wallet\\.\n"
+        f"Tx: `{sig}`\n\n"
+        f"Use `/deposit` to send it to WorldPool and start betting\\.",
         parse_mode="md",
-        link_preview=False,
     )

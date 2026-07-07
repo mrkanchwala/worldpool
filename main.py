@@ -31,11 +31,17 @@ TG_API_HASH = os.environ["TG_API_HASH"]
 TG_BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
 RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.devnet.solana.com")
 ODDS_SHIFT_THRESHOLD = 5.0  # % shift to trigger alert
+ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
 
 # Shared in-memory state
 odds_cache: dict[str, OddsEvent] = {}  # fixture_id → latest OddsEvent
 prev_odds_cache: dict[str, OddsEvent] = {}  # for shift detection
 custom_stake_state: dict[int, dict] = {}  # tg_user_id → {pool_id, outcome} for custom-amount flow
+
+# Score stream and odds stream run concurrently (asyncio.gather in TxLINEStreamer.run) —
+# both can see a brand-new fixture_id at nearly the same time, so auto-creation is
+# serialized to avoid a duplicate pool for the same fixture.
+_pool_create_lock = asyncio.Lock()
 
 
 async def main() -> None:
@@ -59,38 +65,63 @@ async def main() -> None:
     # TxLINE stream callbacks
     streamer = TxLINEStreamer()
 
+    async def _ensure_pool_for_fixture(
+        fixture_id: str, competition_id: str, home_team: str | None, away_team: str | None,
+    ) -> None:
+        """Auto-create a pool the first time TxLINE mentions a fixture WorldPool
+        hasn't seen yet — replaces manual /createpool. TxLINE's odds and score
+        feeds both carry fixture_id pre-kickoff, so either stream can trigger
+        this; whichever fires first wins, the other just no-ops via the lock.
+        Team names may be unknown yet on an odds-only tick — 'TBD' placeholder
+        gets corrected by update_pool_teams once a score event supplies real names."""
+        async with _pool_create_lock:
+            if await queries.get_pool_by_fixture(db, fixture_id):
+                return
+            await queries.upsert_user(db, ADMIN_TG_ID)
+            pool_id = await queries.create_pool(
+                db,
+                fixture_id=fixture_id,
+                competition_id=competition_id or "wc2026",
+                home_team=home_team or f"TBD ({fixture_id[:8]})",
+                away_team=away_team or "TBD",
+                creator_tg_id=ADMIN_TG_ID,
+            )
+            logger.info("Auto-created pool %s for fixture %s (%s vs %s)",
+                        pool_id, fixture_id, home_team or "TBD", away_team or "TBD")
+
     @streamer.on_score
     async def handle_score(event: ScoreEvent) -> None:
         pool = await queries.get_pool_by_fixture(db, event.fixture_id)
         if not pool:
-            return
+            await _ensure_pool_for_fixture(event.fixture_id, event.competition_id, event.home_team, event.away_team)
+            pool = await queries.get_pool_by_fixture(db, event.fixture_id)
+            if not pool:
+                return
+        elif pool["home_team"].startswith("TBD"):
+            await queries.update_pool_teams(db, event.fixture_id, event.home_team, event.away_team)
+            pool = await queries.get_pool_by_fixture(db, event.fixture_id)
 
         if event.event_type == "full_time":
             await queries.close_betting(db, event.fixture_id)
-            payouts, total_pool = await queries.mark_positions_settled(db, pool["pool_id"], event.result)
+            payouts, losses, total_pool = await queries.mark_positions_settled(db, pool["pool_id"], event.result)
             await queries.settle_pool(db, pool["pool_id"], event.result)
 
-            # Credit winners + attach usernames for alert
-            if payouts:
-                winner_ids = [p["tg_user_id"] for p in payouts]
-                usernames = await queries.get_users_by_ids(db, winner_ids)
-                for p in payouts:
-                    p["username"] = usernames.get(p["tg_user_id"], "")
-                    await queries.credit_balance(db, p["tg_user_id"], p["payout"])
+            # Credit winners + attach usernames for the full win/loss alert
+            all_ids = [p["tg_user_id"] for p in payouts] + [p["tg_user_id"] for p in losses]
+            usernames = await queries.get_users_by_ids(db, all_ids)
+            for p in payouts:
+                p["username"] = usernames.get(p["tg_user_id"], "")
+                await queries.credit_balance(db, p["tg_user_id"], p["payout"])
+            for p in losses:
+                p["username"] = usernames.get(p["tg_user_id"], "")
 
             chats = await queries.get_subscribed_chats(db, pool["pool_id"])
-            msg = fulltime_alert(event, payouts, total_pool)
+            msg = fulltime_alert(event, payouts, total_pool, losses)
             for chat_id in chats:
                 await client.send_message(chat_id, msg, parse_mode="md")
 
             # Repayment reminder — notify users with open Kamino leverage positions
-            all_participants = list({p["tg_user_id"] for p in payouts})
-            # Also fetch losers from settled positions
-            settled = await queries.get_pool_positions(db, pool["pool_id"])
-            for pos in settled:
-                uid = pos["tg_user_id"]
-                if uid not in all_participants:
-                    all_participants.append(uid)
+            all_participants = list({p["tg_user_id"] for p in payouts} | {p["tg_user_id"] for p in losses})
             for uid in all_participants:
                 open_borrows = await queries.get_open_leverage_positions(db, uid)
                 if open_borrows:
@@ -123,6 +154,9 @@ async def main() -> None:
     async def handle_odds(event: OddsEvent) -> None:
         prev = odds_cache.get(event.fixture_id)
         odds_cache[event.fixture_id] = event
+
+        if not await queries.get_pool_by_fixture(db, event.fixture_id):
+            await _ensure_pool_for_fixture(event.fixture_id, event.competition_id, event.home_team, event.away_team)
 
         if prev and prev.home_odds > 0:
             shift = abs((event.home_odds - prev.home_odds) / prev.home_odds) * 100

@@ -119,15 +119,16 @@ def register(client: TelegramClient, db) -> None:
 
         # Same sequence as main.py handle_score full_time branch
         await queries.close_betting(db, pool["fixture_id"])
-        payouts, total_pool = await queries.mark_positions_settled(db, pool_id, outcome)
+        payouts, losses, total_pool = await queries.mark_positions_settled(db, pool_id, outcome)
         await queries.settle_pool(db, pool_id, outcome)
 
-        if payouts:
-            winner_ids = [p["tg_user_id"] for p in payouts]
-            usernames = await queries.get_users_by_ids(db, winner_ids)
-            for p in payouts:
-                p["username"] = usernames.get(p["tg_user_id"], "")
-                await queries.credit_balance(db, p["tg_user_id"], p["payout"])
+        all_ids = [p["tg_user_id"] for p in payouts] + [p["tg_user_id"] for p in losses]
+        usernames = await queries.get_users_by_ids(db, all_ids)
+        for p in payouts:
+            p["username"] = usernames.get(p["tg_user_id"], "")
+            await queries.credit_balance(db, p["tg_user_id"], p["payout"])
+        for p in losses:
+            p["username"] = usernames.get(p["tg_user_id"], "")
 
         # Synthetic score reflecting the declared outcome (for the alert card)
         scoreline = {"home": (1, 0), "away": (0, 1), "draw": (1, 1)}[outcome]

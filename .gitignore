@@ -34,3 +34,4 @@ anchor/worldpool/node_modules/
 demo/demo_driver.session
 demo/demo_driver.session-journal
 worldpool-demo-*.mp4
+.DS_Store

@@ -66,6 +66,11 @@ class OddsEvent:
     market: str  # "match_winner"
     event_id: str
     raw: dict
+    # Opportunistic — only set if TxLINE's odds payload happens to carry them
+    # (unconfirmed against a live feed). None means "unknown", not "no match".
+    competition_id: str = ""
+    home_team: Optional[str] = None
+    away_team: Optional[str] = None
 
     @property
     def shift_pct(self, prev_home: float) -> float:
@@ -124,6 +129,9 @@ def parse_odds_event(data: dict) -> Optional[OddsEvent]:
             market="match_winner",
             event_id=str(data.get("messageId", "")),
             raw=data,
+            competition_id=str(data.get("competitionId", "")),
+            home_team=data.get("homeTeam"),
+            away_team=data.get("awayTeam"),
         )
     except (KeyError, TypeError, ValueError):
         return None

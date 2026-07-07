@@ -71,12 +71,14 @@ async def test_place_position_and_settle(db):
     await queries.place_position(db, pool_id, 2, "away", 10.0, 2.10)
 
     # Settle: France wins (home)
-    payouts, total_pool = await queries.mark_positions_settled(db, pool_id, "home")
+    payouts, losses, total_pool = await queries.mark_positions_settled(db, pool_id, "home")
     await queries.settle_pool(db, pool_id, "home")
 
     assert total_pool == pytest.approx(30.0, rel=0.01)  # 20 + 10
     assert len(payouts) == 1
     assert payouts[0]["tg_user_id"] == 1
+    assert len(losses) == 1
+    assert losses[0]["tg_user_id"] == 2
     assert payouts[0]["payout"] == pytest.approx(30.0, rel=0.01)  # entire pool goes to winner
 
 

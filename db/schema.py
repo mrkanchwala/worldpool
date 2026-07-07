@@ -87,6 +87,10 @@ CREATE INDEX IF NOT EXISTS idx_lev_user ON leverage_positions(tg_user_id);
 
 _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN kamino_wallet TEXT",
+    # deposit_address is public (safe to store) — the matching keypair is never
+    # stored anywhere; it's re-derived on demand from the operator keyfile, see
+    # bot/deposit_wallet.py.
+    "ALTER TABLE users ADD COLUMN deposit_address TEXT",
 ]
 
 

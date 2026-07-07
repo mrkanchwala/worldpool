@@ -16,7 +16,14 @@ Then in Telegram (@txodds_mkbot):
     /demobalance                       → credit yourself $100 demo USDC
     /createpool Brazil vs Argentina demo01
     /pool                              → bet on an outcome (try ✏️ Custom)
+    /wallet <your real solana address> → register for Kamino lookup (real mainnet, real position)
+    /leverage                          → borrow against your real Kamino position via WalletConnect
     /playmatch <pool_id> home          → watch the scripted match + payout land
+
+Note: /wallet + /leverage are the SAME production handlers as main.py, not
+demo-only — they require a real Solana wallet with a real Kamino position and
+a real WalletConnect signature. Only the match/odds/settlement data is
+synthetic; the borrow itself is real and must not be faked.
 """
 from __future__ import annotations
 import asyncio
@@ -39,6 +46,8 @@ import bot.handlers.pool as h_pool
 import bot.handlers.positions as h_positions
 import bot.handlers.misc as h_misc
 import bot.handlers.admin as h_admin
+import bot.handlers.wallet as h_wallet
+import bot.handlers.leverage as h_leverage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("worldpool-demo")
@@ -48,7 +57,7 @@ TG_API_HASH = os.environ["TG_API_HASH"]
 TG_BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
 ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
 DEMO_DB = "worldpool_demo.db"
-BEAT = 3.5  # seconds between match events — paced for a clean screen recording
+BEAT = 1.8  # seconds between match events — paced for a clean screen recording
 
 odds_cache: dict = {}
 custom_stake_state: dict = {}
@@ -111,6 +120,10 @@ def register_demo(client: TelegramClient, db) -> None:
         if not pool:
             await event.respond("Pool not found\\.", parse_mode="md")
             raise events.StopPropagation
+        # pool_id may still be the fixture_id typed by the admin (fallback path
+        # above) — every DB call below needs the real pool_id, or settlement
+        # silently updates 0 rows (no error, pool just never reaches 'settled').
+        pool_id = pool["pool_id"]
         if pool["status"] == "settled":
             await event.respond("Pool already settled\\.", parse_mode="md")
             raise events.StopPropagation
@@ -124,8 +137,14 @@ def register_demo(client: TelegramClient, db) -> None:
         label = f"{pool['home_team']} vs {pool['away_team']}"
         fhs, fas = _SCORELINE[result]
 
-        # 1) Kickoff
-        await broadcast(f"⚽ *KICKOFF* — {label}\nLive via TxLINE \\(demo replay\\)")
+        # 1) Kickoff — include a pool summary so viewers see who's in before it closes
+        positions_at_kickoff = await queries.get_pool_positions(db, pool_id)
+        bettors_at_kickoff = len(set(p["tg_user_id"] for p in positions_at_kickoff))
+        total_at_kickoff = sum(p["amount_usdc"] for p in positions_at_kickoff)
+        await broadcast(
+            f"⚽ *KICKOFF* — {label}\nLive via TxLINE \\(demo replay\\)\n\n"
+            f"💰 Pool: ${total_at_kickoff:.2f} · {bettors_at_kickoff} bettors"
+        )
         await asyncio.sleep(BEAT)
 
         # 2) Odds shift (drama)
@@ -147,16 +166,18 @@ def register_demo(client: TelegramClient, db) -> None:
         await asyncio.sleep(BEAT)
 
         # 5) Full time — settle + pay winners (same path as production handle_score)
-        payouts, total_pool = await queries.mark_positions_settled(db, pool_id, result)
+        payouts, losses, total_pool = await queries.mark_positions_settled(db, pool_id, result)
         await queries.settle_pool(db, pool_id, result)
-        if payouts:
-            usernames = await queries.get_users_by_ids(db, [p["tg_user_id"] for p in payouts])
-            for p in payouts:
-                p["username"] = usernames.get(p["tg_user_id"], "")
-                await queries.credit_balance(db, p["tg_user_id"], p["payout"])
+        all_ids = [p["tg_user_id"] for p in payouts] + [p["tg_user_id"] for p in losses]
+        usernames = await queries.get_users_by_ids(db, all_ids)
+        for p in payouts:
+            p["username"] = usernames.get(p["tg_user_id"], "")
+            await queries.credit_balance(db, p["tg_user_id"], p["payout"])
+        for p in losses:
+            p["username"] = usernames.get(p["tg_user_id"], "")
 
         ft = _score_event(pool, fhs, fas, 5, 90, "full_time")
-        await broadcast(fulltime_alert(ft, payouts, total_pool))
+        await broadcast(fulltime_alert(ft, payouts, total_pool, losses))
         raise events.StopPropagation
 
 
@@ -175,6 +196,8 @@ async def main() -> None:
     h_positions.register(client, db)
     h_misc.register(client, db)
     h_admin.register(client, db)
+    h_wallet.register(client, db)
+    h_leverage.register(client, db)
     # Demo-only commands
     register_demo(client, db)
 
